@@ -4,6 +4,7 @@
 .vscode/
 .venv/
 .vscode/
+formulaires_253G2/
 
 # Terraform local/cache files
 **/.terraform/*
