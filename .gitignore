@@ -1,0 +1,10 @@
+.env
+.venv-label-studio/
+.DS_Store
+
+# Terraform local/cache files
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
