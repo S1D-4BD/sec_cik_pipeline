@@ -3,7 +3,7 @@
 import json
 import os
 
-with open("out.txt","r", encoding="utf-8") as f:
+with open("lib/section.txt","r", encoding="utf-8") as f:
     text= f.read()
 data=[
     {
@@ -11,5 +11,5 @@ data=[
     }
 ]
 
-with open("helper_function/out.json", "w", encoding="utf-8") as f:
+with open("lib/section.json", "w", encoding="utf-8") as f:
     json.dump(data,f,ensure_ascii=False, indent=2)

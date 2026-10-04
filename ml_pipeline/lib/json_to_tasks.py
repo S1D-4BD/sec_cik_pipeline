@@ -3,8 +3,8 @@ import nltk
 from nltk.tokenize import sent_tokenize
 nltk.download("punkt_tab", quiet=True)
 
-ENTREE = "./out.json"
-SORTIE = "./tasks.json"
+ENTREE = "./lib/section.json"
+SORTIE = "./lib/tasks.json"
 
 data = json.load(open(ENTREE, encoding="utf-8"))
 

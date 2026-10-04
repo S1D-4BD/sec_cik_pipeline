@@ -1,5 +1,6 @@
 .env
 .venv-label-studio/
+.venv-ml/
 .DS_Store   
 .vscode/
 .venv/
@@ -12,3 +13,12 @@ formulaires_253G2/
 *.tfstate.*
 crash.log
 crash.*.log
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+
+# ML artifacts
+ml_pipeline/gliner_model/
+ml_pipeline/mlruns/
