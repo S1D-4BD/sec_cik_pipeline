@@ -20,7 +20,7 @@ import mlflow
 import torch
 from gliner import GLiNER
 
-from ml_pipeline.lib.gliner_evaluate import compute_scores, format_errors, format_report, prf
+from ml_pipeline.lib.gliner_training.gliner_evaluate import compute_scores, format_errors, format_report, prf
 
 # ---------------------------------------------------------------------------
 # Réglages : modifiez-les ici, un seul par essai

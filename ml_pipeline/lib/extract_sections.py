@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-#  python3 lib/extract_sections.py ../scrapers/formulaires_253G2/0001781737_0001493152-19-014783_form253g2.htm > lib/section.txt
+#  python3 lib/extract_sections.py ../scrapers/formulaires_253G2/0001738134_0001493152-19-013454_form253g2 > lib/section.txt
 #  python3 extract_sections.py filing.htm --map  > map.txt        
 
 
