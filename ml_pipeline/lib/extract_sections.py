@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 
 #  python3 lib/extract_sections.py ../scrapers/formulaires_253G2/0001738134_0001493152-19-013454_form253g2 > lib/section.txt
-#  python3 extract_sections.py filing.htm --map  > map.txt        
+#  python3 extract_sections.py filing.htm --map  > map.txt
+#  python3 extract_sections.py filing.htm --profile offering -o offering.txt    # sections for the Masterworks table
 
 
 import argparse
@@ -11,6 +12,7 @@ import sys
 from bs4 import BeautifulSoup
 
 
+# "artwork" : the original configuration (artwork + sales history extraction), unchanged
 SECTIONS = [
     {"pattern": r"^DESCRIPTION OF BUSINESS$", "subtitles": ["The Painting"]},
     {"pattern": r"^DESCRIPTION OF BUSINESS$", "subtitles": ["The Artist"]},
@@ -18,6 +20,26 @@ SECTIONS = [
     #{"pattern": r"^SECURITY OWNERSHIP", "subtitles": None},
     {"pattern": r"^SUMMARY$", "subtitles": ["Overview"]},
 ]
+
+# "offering" : the 14 offering columns of the Masterworks table, in the 4 smallest sections that hold them.
+# Tested on Masterworks 001 (253G2 of 2019-05-10): all 14 values present, 14,433 characters
+# instead of 438,315 for the full document.
+#   SUMMARY / Overview            -> issuer, date of incorporation, purchase date and price, offering size
+#   SUMMARY / The Painting        -> artist, title, year
+#   DETERMINATION OF OFFERING PRICE -> purchase price, true-up, number of Class A shares, Class B shares
+#   DILUTION                      -> price per share, aggregate cash cost of the Class B shares
+#   DESCRIPTION OF BUSINESS / The Painting -> dimensions
+OFFERING_SECTIONS = [
+    {"pattern": r"^SUMMARY$", "subtitles": ["Overview", "The Painting"]},
+    {"pattern": r"^DETERMINATION OF OFFERING PRICE$", "subtitles": None},
+    {"pattern": r"^DILUTION$", "subtitles": None},
+    {"pattern": r"^DESCRIPTION OF BUSINESS$", "subtitles": ["The Painting"]},
+]
+
+PROFILES = {
+    "artwork": {"sections": SECTIONS, "cover_page": False},
+    "offering": {"sections": OFFERING_SECTIONS, "cover_page": False},
+}
 
 
 KEEP_COVER_PAGE = False
@@ -167,6 +189,8 @@ def main():
     parser.add_argument("-o", "--output", help="output file (default: stdout)")
     parser.add_argument("--map", action="store_true",
                         help="displays structure and exits without extracting")
+    parser.add_argument("--profile", choices=sorted(PROFILES), default="artwork",
+                        help="which sections to extract (default: artwork, the original configuration)")
     args = parser.parse_args()
 
     blocks = load_file(args.file)
@@ -180,7 +204,8 @@ def main():
                 print(f"{'':<8} {sub['start']:>5}                 -- {sub['title']}")
         return 0
 
-    lines, warnings = extract(blocks)
+    profile = PROFILES[args.profile]
+    lines, warnings = extract(blocks, config=profile["sections"], cover_page=profile["cover_page"])
 
     for warning in warnings:
         print(f"[!] {warning}", file=sys.stderr)

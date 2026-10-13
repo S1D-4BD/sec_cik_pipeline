@@ -1,24 +1,36 @@
+# Secrets
 .env
-.venv-label-studio/
-.venv-ml/
-.DS_Store   
-.vscode/
-.venv/
-.vscode/
-formulaires_253G2/
 
-# Terraform local/cache files
+# Environnements Python
+.venv/
+.venv-ml/
+.venv-label-studio/
+venv/
+__pycache__/
+*.py[cod]
+
+# Éditeur et système
+.vscode/
+.DS_Store
+
+# Terraform : état et cache (peuvent contenir des informations sensibles)
 **/.terraform/*
 *.tfstate
 *.tfstate.*
 crash.log
 crash.*.log
 
-# Python
-__pycache__/
-*.py[cod]
-venv/
+# Données téléchargées et produites (elles vivent dans S3)
+scrapers/formulaires_253G2/
+scrapers/documents/
+scrapers/tables/
 
-# ML artifacts
+# Artefacts ML
 ml_pipeline/gliner_model/
 ml_pipeline/mlruns/
+
+# Sorties des tests lancés à la main
+/offering*.txt
+/offering*.json
+last_raw_response.json
+ml_pipeline/tables/
