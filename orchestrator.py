@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
-#   python orchestrateur.py   
-#   python orchestrateur.py 2026-09-28   
 
 import subprocess
 import sys
 from datetime import date
 
-# Liste des scripts, dans l'ordre d'exécution
 SCRIPTS = [
     "sec_cik_scraper.py",
     "sec_253G2_scrapper.py",

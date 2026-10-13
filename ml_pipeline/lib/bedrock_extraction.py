@@ -177,7 +177,7 @@ MEDIUM = {
 MATERIAL = [
     "canvas",
     "paper",
-    "gessoed board", "cardboard", "board",  # virgule ajoutée : sans elle, Python créait "boardmasonite"
+    "gessoed board", "cardboard", "board",
     "masonite",
     "bronze",
     "marble",
