@@ -187,7 +187,8 @@ CURRENCY_SIGNS = {"GBP": ["£", "₤", "gbp", "pound"], "USD": ["$", "usd", "dol
 # Le mot-clé que la preuve DOIT contenir, pour chaque champ (au moins un de la liste)
 KEYWORDS = {
     "issuer_name": ["llc", "inc", "ltd", "spc", "company"],
-    "execution_year": ["created", "painted", "executed", "completed", "dated", "("],
+    "execution_year": ["created", "painted", "executed", "completed", "dated", "(",
+                       "worked on", "made in", "produced", "between"],   # « worked on … from 2007 to 2008 »
     "height_cm": ["cm"],
     "width_cm": ["cm"],
     "incorporation_date": ["formed", "organized", "incorporated", "organised"],
@@ -426,8 +427,9 @@ def explicit_changes(document):
 
 # « for £739,461.38, or $944,600 » ou « for £4,733,750 ($6,239,556) » : le prix d'origine, puis en dollars
 DUAL_PRICE = re.compile(
-    r"(£|₤|€|¥|HK\$|CHF)\s?(\d[\d,]*(?:\.\d+)?)\s*(?:\(|,?\s*or\s+)\s*(?:US)?\$\s?(\d[\d,]*(?:\.\d+)?)")
-SYMBOL_TO_CURRENCY = {"£": "GBP", "₤": "GBP", "€": "EUR", "¥": "JPY", "HK$": "HKD", "CHF": "CHF"}
+    r"(£|₤|€|¥|HK\$|CHF|GBP|EUR|HKD|JPY)\s?(\d[\d,]*(?:\.\d+)?)\s*(?:\(|,?\s*or\s+)\s*(?:US)?\$\s?(\d[\d,]*(?:\.\d+)?)")
+SYMBOL_TO_CURRENCY = {"£": "GBP", "₤": "GBP", "€": "EUR", "¥": "JPY", "HK$": "HKD", "CHF": "CHF",
+                      "GBP": "GBP", "EUR": "EUR", "HKD": "HKD", "JPY": "JPY"}   # « GBP 900,000, or $1,168,065 »
 PURCHASE_WORDS = ["purchas", "acquir", "paid", "bought"]
 
 
@@ -537,6 +539,29 @@ def filled_fields(data):
 MIN_FILLED = len(OfferingExtraction.model_fields) // 2   # en dessous : réponse jugée trop pauvre
 
 
+def sanitize(data):
+    """Écarte les valeurs au mauvais format, champ par champ, au lieu de rejeter toute la réponse.
+    Cas particulier : une plage d'années pour l'année de création (« from 2007 to 2008 », que le modèle
+    renvoie en liste) -> la DERNIÈRE année, comme l'ancien Excel. Renvoie (données nettoyées, remarques)."""
+    from pydantic import TypeAdapter, ValidationError
+    notes, clean_data = [], {}
+    for field, info in OfferingExtraction.model_fields.items():
+        if field not in data:
+            continue
+        value = data[field]
+        if field == "execution_year" and isinstance(value, dict) and isinstance(value.get("value"), list):
+            years = [y for y in value["value"] if isinstance(y, int)]
+            if years:
+                notes.append(("warning", f"execution_year : plage d'années {years}, dernière année retenue ({max(years)})"))
+                value = {**value, "value": max(years)}
+        try:
+            TypeAdapter(info.annotation).validate_python(value)
+            clean_data[field] = value
+        except ValidationError:
+            notes.append(("rejected", f"{field} = {value!r} supprimé : format invalide"))
+    return clean_data, notes
+
+
 def ask_model(client, text):
     """1er essai : l'outil. S'il plante, ou s'il remplit moins de la moitié des champs,
     2e essai : JSON en texte. On garde la réponse la PLUS COMPLÈTE des deux.
@@ -558,7 +583,8 @@ def ask_model(client, text):
             break
     with open("last_raw_response.json", "w", encoding="utf-8") as f:
         json.dump(attempts, f, ensure_ascii=False, indent=2, default=str)
-    return OfferingExtraction.model_validate(best or {}), attempts
+    clean_data, notes = sanitize(best or {})
+    return OfferingExtraction.model_validate(clean_data), attempts, notes
 
 
 # =====================================================================================
@@ -570,8 +596,10 @@ def process_offering(text, client=None, issuer_name=None) -> OfferingResult:
     issuer_name : le nom officiel EDGAR de la société (filings.csv). S'il est donné, il remplace
     celui du modèle, qui n'est alors que comparé."""
     client = client or boto3.client("bedrock-runtime", region_name=REGION)
-    raw, attempts = ask_model(client, text)
+    raw, attempts, notes = ask_model(client, text)
     report = {"rejected": [], "warnings": [], "missing": [], "audit": []}
+    for kind, note in notes:
+        report["rejected" if kind == "rejected" else "warnings"].append(note)
     summary = ", ".join(f"{a['mode']} : {a['champs_remplis']} champ(s)" for a in attempts)
     if len(attempts) > 1:
         report["warnings"].append(f"essais du modèle : {summary}")
@@ -592,6 +620,19 @@ def process_offering(text, client=None, issuer_name=None) -> OfferingResult:
         model_value = raw.issuer_name.value if raw.issuer_name else None
         if model_value and normalize(str(model_value)) != normalize(issuer_name):
             report["warnings"].append(f"nom lu par le modèle ({model_value!r}) ≠ nom EDGAR ({issuer_name!r})")
+
+    # « Hammer 5 (2010) » : l'année entre parenthèses a sa propre colonne. Elle est retirée du titre,
+    # et sert d'année de création si le modèle n'en a pas donné (elle est écrite dans la preuve du titre).
+    title_match = re.fullmatch(r"\s*(.+?)\s*\((1[5-9]\d\d|20[0-2]\d)\)\s*", values.get("title") or "")
+    if title_match:
+        values["title"] = title_match.group(1)
+        year = int(title_match.group(2))
+        if values.get("execution_year") is None:
+            values["execution_year"] = year
+            report["audit"].append({"field": "execution_year", "value": year, "source": "année écrite dans le titre",
+                                    "source_text": raw.title.source_text if raw.title else None})
+        elif values["execution_year"] != year:
+            report["warnings"].append(f"année du titre ({year}) ≠ année de création lue ({values['execution_year']})")
 
     # Changements écrits « from X to Y » (suppléments) : lus par le code, prioritaires sur le modèle
     for field, (new, old, bullet) in explicit_changes(text).items():

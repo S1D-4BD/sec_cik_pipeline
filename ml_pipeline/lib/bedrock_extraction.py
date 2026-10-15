@@ -1,4 +1,4 @@
-
+## python lib/bedrock_extract.py lib/section.txt   
 import json
 import re
 import sys
@@ -346,9 +346,6 @@ class ArtworkRecord(BaseModel):
     audit: List[dict] = []      # chaque valeur acceptée, avec sa preuve
 
 
-# =====================================================================================
-# 3. LE PROMPT
-# =====================================================================================
 PROMPT = """You extract structured data about ONE artwork from a document (usually an SEC offering circular),
 including its full sales history.
 
@@ -419,9 +416,6 @@ Build them from BOTH the provenance lines and the sale paragraphs:
 STEP 5 - Before answering, check:
 - every provenance line saying the work was bought has its transaction;
 - every transaction has house, city, date, lot and price whenever the document gives them."""
-# =====================================================================================
-# 4. LES CONTRÔLES : c'est ici que se joue la sécurité
-# =====================================================================================
 
 def normalize(s):
     """Minuscules, guillemets typographiques remplacés, espaces regroupés."""

@@ -25,12 +25,14 @@ SECTIONS = [
 # Tested on Masterworks 001 (253G2 of 2019-05-10): all 14 values present, 14,433 characters
 # instead of 438,315 for the full document.
 #   SUMMARY / Overview            -> issuer, date of incorporation, purchase date and price, offering size
+#   SUMMARY / The Artist          -> artist name, when The Painting only says "the artist" (Masterworks 005)
+#                                    ("?" = optional subtitle: no warning if a circular does not have it)
 #   SUMMARY / The Painting        -> artist, title, year
 #   DETERMINATION OF OFFERING PRICE -> purchase price, true-up, number of Class A shares, Class B shares
 #   DILUTION                      -> price per share, aggregate cash cost of the Class B shares
 #   DESCRIPTION OF BUSINESS / The Painting -> dimensions
 OFFERING_SECTIONS = [
-    {"pattern": r"^SUMMARY$", "subtitles": ["Overview", "The Painting"]},
+    {"pattern": r"^SUMMARY$", "subtitles": ["Overview", "?The Artist", "The Painting"]},
     {"pattern": r"^DETERMINATION OF OFFERING PRICE$", "subtitles": None},
     {"pattern": r"^DILUTION$", "subtitles": None},
     {"pattern": r"^DESCRIPTION OF BUSINESS$", "subtitles": ["The Painting"]},
@@ -169,7 +171,11 @@ def extract(blocks, config=SECTIONS, cover_page=KEEP_COVER_PAGE):
                 available = sub_sections(blocks, section["start"], section["finish"])
                 index = {s["title"]: s for s in available}
                 for label in wanted:
+                    optional = label.startswith("?")
+                    label = label.lstrip("?")
                     sub = index.get(label)
+                    if sub is None and optional:
+                        continue
                     if sub is None:
                         warnings.append(
                             f"subtitle not found: {label!r} "
