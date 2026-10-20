@@ -5,3 +5,5 @@ lxml
 nltk
 gliner
 playwright
+pydantic 
+openpyxl 

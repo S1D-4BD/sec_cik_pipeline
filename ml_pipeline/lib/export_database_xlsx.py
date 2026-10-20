@@ -23,6 +23,7 @@ import argparse
 import csv
 import io
 import os
+import re
 from datetime import date, datetime
 from pathlib import Path
 
@@ -255,6 +256,16 @@ def main():
 
     lifecycle = read_lifecycle()
     rows = [{**r, **lifecycle.get(r["cik"], {})} for r in read_input(args.input)]
+    # Titre et artiste : ceux des circulaires d'abord ; sinon ceux des annonces de vente
+    for r in rows:
+        title = r.get("artwork_title") or ""
+        year = re.fullmatch(r"\s*(.+?)\s*\((1[5-9]\d\d|20[0-2]\d)\)\s*", title)
+        if not r.get("title") and title:
+            r["title"] = year.group(1) if year else title
+        if not r.get("execution_year") and year:
+            r["execution_year"] = year.group(2)
+        if not r.get("artist_name") and r.get("artwork_artist"):
+            r["artist_name"] = r["artwork_artist"]
     rows = sorted(rows, key=lambda r: r.get("issuer_name_edgar", ""))
     print(f"fin de vie disponible pour {sum(1 for r in rows if r['cik'] in lifecycle)}/{len(rows)} société(s)")
     wb = build_workbook(rows)

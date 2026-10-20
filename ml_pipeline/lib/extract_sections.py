@@ -50,9 +50,34 @@ MAX_TITLE_LENGTH = 120
 def norm(text):
     return " ".join(text.replace("\xa0", " ").split())  # basically clearing out weird symbols and extra whitespace
 
+# Texte INVISIBLE inséré dans certains documents pour brouiller la copie automatique :
+# <FONT STYLE="font-size: 2pt; color: white">x</FONT> entre chaque lettre d'un titre.
+# Un lecteur voit « Rat & Heart », un programme lirait « xRxaxtx x&x xHxexaxrxtx ».
+def remove_hidden_text(soup):
+    """Retire du document tout élément invisible : masqué, de taille nulle, ou blanc et minuscule."""
+    for tag in soup.find_all(style=True):
+        if tag.parent is None:
+            continue                         # déjà retiré avec un élément parent
+        style = re.sub(r"\s+", "", str(tag.get("style", "")).lower())
+        size = re.search(r"font-size:(\d+(?:\.\d+)?)(pt|px)", style)
+        tiny = size is not None and float(size.group(1)) <= (3 if size.group(2) == "pt" else 4)
+        white = re.search(r"color:(white|#fff\b|#ffffff)", style) is not None
+        filler = re.fullmatch(r"[xX\s]+", tag.get_text() or "") is not None     # que des « x » (et des espaces)
+        if "display:none" in style or "visibility:hidden" in style or "font-size:0" in style \
+                or (tiny and (white or filler)):
+            # Le texte invisible porte parfois l'espace entre deux mots (« x x ») : on garde cet espace
+            tag.replace_with(" " if re.search(r"\s", tag.get_text()) else "")
+    # Les balises de mise en forme (police, gras…) sont fusionnées avec leur texte : « R » « a » « t »
+    # redeviennent « Rat », au lieu d'être séparés par un espace à la lecture
+    for tag in soup.find_all(["font", "span", "b", "i", "u", "strong", "em"]):
+        tag.unwrap()
+    soup.smooth()
+    return soup
+
+
 def load_file(file_path):
     with open(file_path, encoding="utf-8", errors="replace") as file:
-        soup = BeautifulSoup(file.read(), "lxml")  # not html files, its close its htm (so not perfect but its like XML)
+        soup = remove_hidden_text(BeautifulSoup(file.read(), "lxml"))  # .htm, close to XML ; hidden text removed
 
     root = soup.find("text") or soup.body  # the root element is actually <text> in these htm files
     if root is None:

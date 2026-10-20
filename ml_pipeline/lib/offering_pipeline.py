@@ -17,6 +17,8 @@ dans S3, sous extractions/) n'est pas renvoyée à Nova. --force les retraite to
 
 Usage (depuis la racine du projet) :
     python ml_pipeline/lib/offering_pipeline.py --limit 3        # test sur 3 sociétés
+    python ml_pipeline/lib/offering_pipeline.py --only 009,021          # seulement ces sociétés (le reste de la table est conservé)
+    python ml_pipeline/lib/offering_pipeline.py --only 009 --force      # retraite seulement 009 (relance Bedrock pour elle seule)
     python ml_pipeline/lib/offering_pipeline.py                  # toutes les sociétés
     python ml_pipeline/lib/offering_pipeline.py --force          # retraite tout (après un changement de règles)
 
@@ -29,6 +31,7 @@ import io
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -124,6 +127,12 @@ def document_text(html):
     text = "\n".join(lines)
     if not text.strip():
         return full, "texte entier (sections introuvables)", warnings
+    # La phrase qui présente l'œuvre (« … a single work of art by Agnes Martin (the "Painting") ») est
+    # souvent sur la page de garde, hors des sections : on l'ajoute, c'est là qu'est l'artiste (et parfois le titre)
+    presentation = [x for x in full.split("\n")          # par paragraphe : « Untitled No. 10 » reste entier
+                    if re.search(r"\(the [\"“](?:Painting|Artwork|Work)[\"”]", x) and "work of art" in x.lower()][:2]
+    if presentation:
+        text = "## SECTION | PRESENTATION\n" + "\n".join(p.strip() for p in presentation) + "\n\n" + text
     return text, "sections offering", warnings
 
 
@@ -194,10 +203,16 @@ def process_company(cik, company_filings, client, force):
                 continue                         # un document muet sur un champ ne l'efface pas
             if field in final and final[field] != value:
                 kind = change_kind(field, final[field], value, text)
+                if not kind.startswith("réel"):
+                    # L'ancienne valeur est TOUJOURS écrite dans le document récent : rien n'a changé.
+                    # On la garde (ex. 20 $ par action, quand un supplément cite aussi les 26,67 $
+                    # distribués par une AUTRE société dans le rappel de ses résultats passés).
+                    changes.append(f"{field} : {value} lu dans {label} IGNORÉ, {final[field]} conservé "
+                                   f"(toujours écrit dans ce document) [{kind}]")
+                    continue
                 changes.append(f"{field} : {final[field]} ({provenance[field]['document']}) -> {value} "
                                f"({label}) [{kind}]")
-                if kind.startswith("réel"):
-                    terms = circular
+                terms = circular
             final[field] = value
             provenance[field] = {"value": value, "document": label, "accession": circular["accession_number"],
                                  "source_text": evidence.get(field)}
@@ -220,7 +235,37 @@ def process_company(cik, company_filings, client, force):
 # -------------------------------------------------------------------------
 # Programme principal
 # -------------------------------------------------------------------------
+def select_companies(companies, only=None, limit=None):
+    """Les sociétés à traiter, toujours dans le même ordre (par CIK).
+    only : « 009,021,Collection 001,0001817381 » : numéros de LLC, noms ou CIK, séparés par des virgules."""
+    ciks = sorted(companies)
+    if only:
+        wanted = [w.strip() for w in only.split(",") if w.strip()]
+        def hit(cik, w):
+            if w.isdigit() and len(w) > 4:
+                return cik == w.zfill(10)                                    # un CIK
+            return bool(re.search(rf"(?<!\d){re.escape(w)}(?!\d)", companies[cik][0]["company_name"], re.I))
+        for w in wanted:
+            if not any(hit(c, w) for c in ciks):
+                logging.warning(f"--only : aucune société ne correspond à « {w} »")
+        ciks = [c for c in ciks if any(hit(c, w) for w in wanted)]
+    return ciks[:limit] if limit else ciks
+
+
+def merge_with_existing(rows, local_path, s3_key):
+    existing = []
+    if local_path.exists():
+        existing = list(csv.DictReader(open(local_path, encoding="utf-8")))
+    else:
+        raw = s3_read(s3_key)
+        if raw:
+            existing = list(csv.DictReader(io.StringIO(raw.decode("utf-8"))))
+    done = {r["cik"] for r in rows}
+    return [r for r in existing if r.get("cik") not in done] + rows
+
+
 def save_table(rows):
+    rows = merge_with_existing(rows, LOCAL_TABLE, S3_TABLE_KEY)
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=TABLE_COLUMNS, extrasaction="ignore")
     writer.writeheader()
@@ -234,6 +279,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--filings-file", help="filings.csv local, à la place de celui de S3.")
     parser.add_argument("--limit", type=int, help="Ne traiter que les N premières sociétés (pour tester).")
+    parser.add_argument("--only", help="Seulement ces sociétés : numéros de LLC, noms ou CIK séparés par des virgules "
+                                       "(ex. --only 009,021,\"Collection 001\").")
     parser.add_argument("--force", action="store_true", help="Retraiter aussi les sociétés déjà traitées.")
     args = parser.parse_args()
 
@@ -249,11 +296,11 @@ def main():
     companies = {}
     for f in filings:
         companies.setdefault(f["cik"], []).append(f)
-    ciks = sorted(companies)[: args.limit] if args.limit else sorted(companies)
+    ciks = select_companies(companies, args.only, args.limit)
+    logging.info(f"{len(ciks)} société(s) à traiter")
 
     client = boto3.client("bedrock-runtime", region_name=offering_lib.REGION)
     rows = []
-    # try / finally : même si vous arrêtez le script (Ctrl + C), la table est enregistrée
     try:
         for n, cik in enumerate(ciks, 1):
             name = companies[cik][0]["company_name"]

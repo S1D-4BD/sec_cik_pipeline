@@ -30,6 +30,7 @@ import argparse
 import json
 import re
 import sys
+import unicodedata
 from typing import Generic, List, Optional, TypeVar
 
 import boto3
@@ -215,9 +216,18 @@ KINDS = {
 }
 
 
+def base_letter(ch):
+    """« ü » -> « u », « é » -> « e » : un seul caractère pour un seul caractère (les positions restent justes)."""
+    if ch.isascii():
+        return ch
+    decomposed = unicodedata.normalize("NFKD", ch)
+    return decomposed[0] if decomposed and decomposed[0].isascii() else ch
+
+
 def normalize(s):
     for a, b in {**QUOTES, "₤": "£"}.items():
         s = s.replace(a, b)
+    s = "".join(base_letter(ch) for ch in s)
     return re.sub(r"\s+", " ", s).strip().lower()
 
 
@@ -287,6 +297,8 @@ def normalize_with_positions(text, tolerant):
     chars, positions, previous_space = [], [], True
     for i, ch in enumerate(text):
         ch = QUOTES.get(ch, ch)
+        if ch not in FRAGILE_CHARS:
+            ch = base_letter(ch)
         if tolerant and ch in FRAGILE_CHARS:
             ch = "\x00"
         if ch.isspace():
@@ -362,14 +374,28 @@ def check(field, item, document, report):
     elif field in NUMERIC_FIELDS and any(h in normalize(sentence) for h in HYPOTHETICAL):
         reason = f"phrase hypothétique, pas une condition de l'offre : {sentence.strip()!r}"
     else:
+        if KINDS[field] == "text":
+            value = as_written(value, real)
         report["audit"].append({"field": field, "value": value, "source_text": real})
         return value
     report["rejected"].append(f"{field} = {value!r} supprimé : {reason}")
     return None
 
 
+def as_written(value, passage):
+    """Le texte tel qu'il est ÉCRIT dans le document : « Gunther Forg » lu par le modèle -> « Günther Förg »."""
+    norm_passage, positions = normalize_with_positions(passage, tolerant=False)
+    norm_value, _ = normalize_with_positions(str(value), tolerant=False)
+    i = norm_passage.find(norm_value)
+    if i == -1 or not norm_value:
+        return value
+    return passage[positions[i]:positions[i + len(norm_value) - 1] + 1]
+
+
 PRICE_PER_SHARE = re.compile(r"\$\s?(\d{1,4}(?:\.\d{2})?)\s+per\s+(?:class a\s+)?(?:ordinary\s+)?share", re.I)
-PRICE_EXCLUDED = ["cash cost", "book value", "less than"]   # « $0.01 per share », valeur comptable...
+# « $0.01 per share », valeur comptable, et les distributions des ventes passées d'AUTRES sociétés
+PRICE_EXCLUDED = ["cash cost", "book value", "less than", "distribut", "proceeds", "previously", "prior ",
+                  "sold", "sale of", "net annualized", "return"]
 
 
 def regex_price_per_share(document):
@@ -449,6 +475,53 @@ def dual_currency_purchase(document):
     if len(distinct) == 1:
         return next(iter(found))
     return None
+
+
+YEAR_RX = r"(1[5-9]\d\d|20[0-2]\d)"
+# « (the "Painting") », « (the “Artwork”) », « (the “Artwork” or the “Painting”) »
+PAINTING_TAG = r"\(the [\"“](?:Painting|Artwork|Work)[\"”](?:\s+or\s+the\s+[\"“](?:Painting|Artwork|Work)[\"”])?\)"
+# Une fin de phrase, mais pas après « No. », « Inc. », « Co. »… (« Untitled No. 10 » est un seul titre)
+SENTENCE_END = r"(?<!\bNo\.)(?<!\bNos\.)(?<!\bInc\.)(?<!\bCo\.)(?<!\bSt\.)(?<!\bVol\.)(?<=[.!?])\s+|\n+"
+SCRAMBLED = re.compile(r"(?:\b\w\b\s+x\s+){3,}")   # texte brouillé : « x C x o x u x p … »
+
+
+def artwork_facts(text):
+    """L'artiste, le titre et l'année, lus par le code dans les tournures fixes des circulaires :
+      « ### The Artist Agnes Martin (b. 1912 … »
+      « … a single work of art by Agnes Martin (the "Painting") »
+      « … created in 1979 by Andy Warhol entitled, 1 Colored Marilyn (Reversal Series) (the "Painting") »
+      « … a single untitled work of art created by Keith Haring (the "Painting") »
+      « … acquire the Painting (1990), which measures … »
+    Renvoie {champ: (valeur, phrase du document)}."""
+    facts = {}
+    m = re.search(r"###\s*The Artist\s+([A-Z][^()\n]{1,60}?)\s*\((?:b\.|born)", text)
+    if m:
+        facts["artist_name"] = (m.group(1).strip(" ,"), text[m.start():m.end() + 40].replace("\n", " "))
+    for sentence in re.split(SENTENCE_END, text):
+        if not re.search(PAINTING_TAG, sentence) or "work of art" not in sentence.lower():
+            continue
+        a = re.search(r"\bby\s+([A-Z][^()\"“”,]{1,60}?)\s*(?:\([^)]*\))?(?:\s+in\s+" + YEAR_RX + r")?"
+                      r"(?:,?\s+entitled|\s*" + PAINTING_TAG + ")", sentence)
+        if a and "artist_name" not in facts:
+            facts["artist_name"] = (a.group(1).strip(), sentence.strip())
+        t = re.search(r"entitled,?\s+[\"“]?(.+?)[\"”]?,?\s*" + PAINTING_TAG, sentence)
+        if t and not SCRAMBLED.search(t.group(1)) and "title" not in facts:
+            facts["title"] = (t.group(1).strip(" ,"), sentence.strip())
+        elif re.search(r"\buntitled work of art", sentence, re.I) and "title" not in facts:
+            facts["title"] = ("Untitled", sentence.strip())
+        y = re.search(r"created in " + YEAR_RX, sentence) or re.search(r"\bby\s+[^,()]{1,60}?\s+in\s+" + YEAR_RX + r"\s+entitled", sentence)
+        if y and "execution_year" not in facts:
+            facts["execution_year"] = (int(y.group(1)), sentence.strip())
+    # « Masterworks agreed to acquire Maxine (1974), which … » : le titre ET l'année
+    acq = re.search(r"agreed to acquire\s+(?!the Painting)([A-Z][^,()]{0,80}?)\s*\(" + YEAR_RX + r"\)", text)
+    if acq:
+        passage = text[max(0, acq.start() - 20):acq.end() + 30].replace("\n", " ")
+        facts.setdefault("title", (acq.group(1).strip(), passage))
+        facts.setdefault("execution_year", (int(acq.group(2)), passage))
+    y = re.search(r"the Painting \(" + YEAR_RX + r"\)", text)
+    if y and "execution_year" not in facts:
+        facts["execution_year"] = (int(y.group(1)), text[max(0, y.start() - 60):y.end() + 40].replace("\n", " "))
+    return facts
 
 
 def coherence_warnings(r):
@@ -549,6 +622,8 @@ def sanitize(data):
         if field not in data:
             continue
         value = data[field]
+        if isinstance(value, dict) and isinstance(value.get("value"), list) and len(value["value"]) == 1:
+            value = {**value, "value": value["value"][0]}
         if field == "execution_year" and isinstance(value, dict) and isinstance(value.get("value"), list):
             years = [y for y in value["value"] if isinstance(y, int)]
             if years:
@@ -623,10 +698,31 @@ def process_offering(text, client=None, issuer_name=None) -> OfferingResult:
 
     # « Hammer 5 (2010) » : l'année entre parenthèses a sa propre colonne. Elle est retirée du titre,
     # et sert d'année de création si le modèle n'en a pas donné (elle est écrite dans la preuve du titre).
-    title_match = re.fullmatch(r"\s*(.+?)\s*\((1[5-9]\d\d|20[0-2]\d)\)\s*", values.get("title") or "")
+    # Artiste, titre, année : si le modèle ne les a pas trouvés, on les lit dans les tournures fixes
+    for field, (value, sentence) in artwork_facts(text).items():
+        if values.get(field) in (None, ""):
+            values[field] = value
+            report["audit"].append({"field": field, "value": value, "source_text": sentence, "source": "tournure fixe"})
+        elif normalize(str(values[field])) != normalize(str(value)) and field != "title":
+            report["warnings"].append(f"{field} : le modèle a lu {values[field]!r}, la tournure fixe donne {value!r}")
+
+    # « “Rat & Heart” » : les guillemets autour du titre ne font pas partie du titre
+    if values.get("title"):
+        values["title"] = values["title"].strip().strip('"“”\'‘’').strip() or None
+
+    # « Coup de Vent, or Gust of Wind » : le titre d'origine, sans sa traduction
+    if values.get("title") and re.search(r",\s+or\s+", values["title"]):
+        values["title"] = re.split(r",\s+or\s+", values["title"])[0].strip()
+    # « Brian Donnelly, better known as KAWS » : le nom d'artiste
+    known_as = re.search(r"(?:better |also |professionally )?known as\s+(.+)$", values.get("artist_name") or "", re.I)
+    if known_as:
+        values["artist_name"] = known_as.group(1).strip(" ,.")
+    # « Titre (2010) » ou « Titre, 2009 » : l'année a sa propre colonne
+    title_match = re.fullmatch(r"\s*(.+?)\s*(?:\((1[5-9]\d\d|20[0-2]\d)\)|,\s*(1[5-9]\d\d|20[0-2]\d))\s*",
+                               values.get("title") or "")
     if title_match:
         values["title"] = title_match.group(1)
-        year = int(title_match.group(2))
+        year = int(title_match.group(2) or title_match.group(3))
         if values.get("execution_year") is None:
             values["execution_year"] = year
             report["audit"].append({"field": "execution_year", "value": year, "source": "année écrite dans le titre",
@@ -677,6 +773,10 @@ def process_offering(text, client=None, issuer_name=None) -> OfferingResult:
     # Prix par action : secours par expression régulière, s'il n'a pas de preuve valable
     if values.get("price_per_class_a_share") is None:
         price, found = regex_price_per_share(text)
+        shares, total = values.get("class_a_shares_offered"), values.get("aggregate_offering")
+        if price is not None and shares and total and abs(shares * price - total) > 1:
+            report["warnings"].append(f"prix par action {price} écarté : {shares:,} actions × {price} ≠ offre totale {total:,.0f}")
+            price, found = None, None
         if price is not None:
             values["price_per_class_a_share"] = price
             report["audit"].append({"field": "price_per_class_a_share", "value": price,

@@ -1,15 +1,5 @@
 #!/usr/bin/env python3
 """
-Index des dépôts EDGAR : pour chaque CIK Masterworks, la liste COMPLÈTE de ses documents
-(type de formulaire, date de dépôt, numéro de dépôt, lien de téléchargement).
-
-Source : l'API officielle des dépôts de la SEC (data.sec.gov/submissions), classée par date.
-Aucune extraction par LLM : les dates viennent directement d'EDGAR, elles sont exactes.
-
-Sortie : une ligne par document déposé
-    - en local : scrapers/tables/filings.csv
-    - dans S3  : tables/filings.csv
-
 Usage :
     python scrapers/sec_filings_index.py                                   # tous les CIK de S3
     python scrapers/sec_filings_index.py --limit 3                         # test sur 3 sociétés

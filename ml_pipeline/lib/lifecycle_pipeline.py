@@ -15,6 +15,7 @@ Une valeur absente des documents reste VIDE : rien n'est déduit ni complété.
 
 Usage (depuis la racine du projet) :
     python ml_pipeline/lib/lifecycle_pipeline.py --limit 10
+    python ml_pipeline/lib/lifecycle_pipeline.py --only 009,021          # seulement ces sociétés (le reste de la table est conservé)
     python ml_pipeline/lib/lifecycle_pipeline.py
 """
 
@@ -47,7 +48,7 @@ LIFECYCLE_FORMS = {"1-U", "1-U/A", "1-SA", "1-SA/A", "1-K", "1-K/A"}
 FIELDS = ["offering_closing_date", "consignment_date", "sale_agreement_date", "sale_closing_date",
           "cash_received_date", "distribution_reported_date", "dissolution_date", "buyer", "sale_price",
           "net_liquidation_proceeds", "total_class_a_outstanding", "class_b_profit_share",
-          "distributable_per_class_a_share", "irr", "llc_liquidated"]
+          "distributable_per_class_a_share", "irr", "llc_liquidated", "artwork_title", "artwork_artist"]
 TABLE_COLUMNS = ["cik", "issuer_name_edgar"] + FIELDS + ["status", "n_documents_read", "sources", "warnings"]
 
 
@@ -64,12 +65,38 @@ def clean(text):
     return re.sub(r"\s+", " ", text).strip()
 
 
+# Texte INVISIBLE inséré dans certains documents pour brouiller la copie automatique :
+# <FONT STYLE="font-size: 2pt; color: white">x</FONT> entre chaque lettre d'un titre.
+# Un lecteur voit « Rat & Heart », un programme lirait « xRxaxtx x&x xHxexaxrxtx ».
+def remove_hidden_text(soup):
+    """Retire du document tout élément invisible : masqué, de taille nulle, ou blanc et minuscule."""
+    for tag in soup.find_all(style=True):
+        if tag.parent is None:
+            continue                         # déjà retiré avec un élément parent
+        style = re.sub(r"\s+", "", str(tag.get("style", "")).lower())
+        size = re.search(r"font-size:(\d+(?:\.\d+)?)(pt|px)", style)
+        tiny = size is not None and float(size.group(1)) <= (3 if size.group(2) == "pt" else 4)
+        white = re.search(r"color:(white|#fff\b|#ffffff)", style) is not None
+        filler = re.fullmatch(r"[xX\s]+", tag.get_text() or "") is not None     # que des « x » (et des espaces)
+        if "display:none" in style or "visibility:hidden" in style or "font-size:0" in style \
+                or (tiny and (white or filler)):
+            # Le texte invisible porte parfois l'espace entre deux mots (« x x ») : on garde cet espace
+            tag.replace_with(" " if re.search(r"\s", tag.get_text()) else "")
+    # Les balises de mise en forme (police, gras…) sont fusionnées avec leur texte : « R » « a » « t »
+    # redeviennent « Rat », au lieu d'être séparés par un espace à la lecture
+    for tag in soup.find_all(["font", "span", "b", "i", "u", "strong", "em"]):
+        tag.unwrap()
+    soup.smooth()
+    return soup
+
+
 def to_text(html):
-    return clean(BeautifulSoup(html, "html.parser").get_text(" "))
+    return clean(remove_hidden_text(BeautifulSoup(html, "html.parser")).get_text(" "))
 
 
 def sentences(text):
-    return re.split(r"(?<=[.!?])\s+(?=[A-Z])", text)
+    # pas de coupure après « No. », « Inc. »… : « Untitled No. 10 » est un seul titre
+    return re.split(r"(?<!\bNo\.)(?<!\bInc\.)(?<!\bCo\.)(?<!\bSt\.)(?<=[.!?])\s+(?=[A-Z])", text)
 
 
 MONTH = r"(?:January|February|March|April|May|June|July|August|September|October|November|December)"
@@ -115,7 +142,12 @@ PHRASE_RULES = [
     ("buyer", r"\bto\s+((?:(?!\bto\s)[^()]){2,150}?)\s*\(the\s+\"Buyer\"\)", "buyer"),
     ("distributable_per_class_a_share", rf"distribution in the amount of\s+(?:approximately\s+)?{AMOUNT}[^.]{{0,40}}?per Class A", "amount"),
     ("irr", r"net annualized return of\s+(\d+(?:\.\d+)?)\s?%", "percent"),
+    # L'œuvre, nommée dans les annonces de vente : « sold the painting created by Claude Monet, entitled
+    # Coup de Vent (the "Painting") » (utile quand la circulaire ne donnait pas le titre)
+    ("artwork_title", r"entitled,?\s+\"?(.+?)\"?,?\s*\(the\s+\"(?:Painting|Artwork|Work)\"(?:\s+or\s+the\s+\"(?:Painting|Artwork|Work)\")?\)", "title"),
+    ("artwork_artist", r"\b(?:painting|work of art|artwork)\s+(?:created\s+)?by\s+([A-Z][^(),\"]{1,60}?)\s*(?:\([^)]*\))?,\s+entitled", "text"),
 ]
+SCRAMBLED = re.compile(r"(?:\b\w\b\s+x\s+){3,}")   # texte brouillé dans certains 1-U : « x C x o x u … »
 
 # Une phrase hypothétique ou au conditionnel ne décrit pas un événement qui a eu lieu
 HYPOTHETICAL = ["if the", "would ", "assum", "for example", "hypothetical", "expects to", "anticipate"]
@@ -156,6 +188,10 @@ def phrase_values(text):
                     value = parse_number(raw)
                 elif kind == "percent":
                     value = round(float(raw) / 100, 6)
+                elif kind == "title":
+                    value = None if SCRAMBLED.search(raw) else raw.strip(" ,")
+                elif kind == "text":
+                    value = raw.strip(" ,")
                 else:   # buyer : on retire la description qui suit (« , a Delaware limited liability company »)
                     value = re.sub(r",\s+an?\s+[A-Za-z ]*$", "", raw).strip(" ,")
                 if value not in (None, ""):
@@ -185,7 +221,7 @@ TABLE_ROWS = [   # (début du libellé, champ, type)
 
 def table_values(html):
     """Les lignes du tableau de liquidation : {champ: [(valeur, ligne du tableau)]}."""
-    soup = BeautifulSoup(html, "html.parser")
+    soup = remove_hidden_text(BeautifulSoup(html, "html.parser"))
     if "distributable proceeds" not in soup.get_text(" ").lower():
         return {}
     found = {}
@@ -308,7 +344,44 @@ def process_company(cik, company_filings, files_by_accession):
 # 6. PROGRAMME PRINCIPAL
 # =====================================================================================
 
+def select_companies(companies, only=None, limit=None):
+    """Les sociétés à traiter, toujours dans le même ordre (par CIK).
+    only : « 009,021,Collection 001,0001817381 » : numéros de LLC, noms ou CIK, séparés par des virgules."""
+    ciks = sorted(companies)
+    if only:
+        wanted = [w.strip() for w in only.split(",") if w.strip()]
+        def matches(cik):
+            name = companies[cik][0]["company_name"]
+            for w in wanted:
+                if w.isdigit() and len(w) > 4 and cik == w.zfill(10):
+                    return True                                         # un CIK
+                if re.search(rf"(?<![\d]){re.escape(w)}(?![\d])", name, re.I):
+                    return True                                         # « 009 » ou « Collection 001 »
+            return False
+        ciks = [c for c in ciks if matches(c)]
+        found = {w for w in wanted if any(re.search(rf"(?<![\d]){re.escape(w)}(?![\d])", companies[c][0]["company_name"], re.I)
+                                          or c == w.zfill(10) for c in ciks)}
+        for w in wanted:
+            if w not in found:
+                logging.warning(f"--only : aucune société ne correspond à « {w} »")
+    return ciks[:limit] if limit else ciks
+
+
+def merge_with_existing(rows, local_path, s3_key):
+    """Mise à jour PARTIELLE : les lignes traitées remplacent les anciennes, toutes les autres sont gardées."""
+    existing = []
+    if local_path.exists():
+        existing = list(csv.DictReader(open(local_path, encoding="utf-8")))
+    else:
+        raw = s3_read(s3_key)
+        if raw:
+            existing = list(csv.DictReader(io.StringIO(raw.decode("utf-8"))))
+    done = {r["cik"] for r in rows}
+    return [r for r in existing if r.get("cik") not in done] + rows
+
+
 def save_table(rows):
+    rows = merge_with_existing(rows, LOCAL_TABLE, S3_TABLE_KEY)
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=TABLE_COLUMNS, extrasaction="ignore")
     writer.writeheader()
@@ -323,6 +396,8 @@ def main():
     parser.add_argument("--filings-file", help="filings.csv local, à la place de celui de S3.")
     parser.add_argument("--documents-file", help="documents.csv local, à la place de celui de S3.")
     parser.add_argument("--limit", type=int, help="Ne traiter que les N premières sociétés.")
+    parser.add_argument("--only", help="Seulement ces sociétés : numéros de LLC, noms ou CIK séparés par des virgules "
+                                       "(ex. --only 009,021,\"Collection 001\").")
     args = parser.parse_args()
 
     filings = read_csv_source(args.filings_file, S3_FILINGS_KEY, "sec_filings_index.py")
@@ -334,7 +409,8 @@ def main():
     companies = {}
     for f in filings:
         companies.setdefault(f["cik"], []).append(f)
-    ciks = sorted(companies)[: args.limit] if args.limit else sorted(companies)
+    ciks = select_companies(companies, args.only, args.limit)
+    logging.info(f"{len(ciks)} société(s) à traiter")
 
     rows = []
     try:
