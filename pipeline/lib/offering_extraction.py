@@ -13,14 +13,14 @@ Chaque valeur doit venir avec sa preuve (les mots exacts du document), et le COD
 Une valeur qui échoue à un seul contrôle est SUPPRIMÉE, et la raison est enregistrée.
 
 Usage :
-    python ml_pipeline/lib/offering_extract.py offering.txt --issuer "Masterworks 001, LLC"
+    python pipeline/lib/offering_extraction.py offering.txt --issuer "Masterworks 001, LLC"
     -> offering_extractions.json (valeurs vérifiées) + offering_audit.json (preuves, suppressions)
 
     --issuer : le nom officiel de la société chez EDGAR (colonne company_name de filings.csv).
                Il est plus sûr que celui lu par le modèle. Sans --issuer, le modèle le cherche.
 
 Depuis votre code :
-    from offering_extract import process_offering
+    from offering_extraction import process_offering
     result = process_offering(texte, issuer_name="Masterworks 001, LLC")   -> OfferingResult
 
 Aucun fichier local requis. Bibliothèques : pip install boto3 pydantic

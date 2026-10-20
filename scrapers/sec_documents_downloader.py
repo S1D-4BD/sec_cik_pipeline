@@ -61,8 +61,8 @@ FORMS = {"253G2", "253G3", "1-U", "1-U/A", "1-K", "1-K/A", "1-SA", "1-SA/A", "1-
 TEXT_EXTENSIONS = (".htm", ".html", ".xml", ".txt", ".pdf")
 ###########################################################################
 
-LOCAL_DIR = Path(__file__).parent / "documents"
-LOCAL_MANIFEST = Path(__file__).parent / "tables" / "documents.csv"
+LOCAL_DIR = Path(__file__).parent.parent / "data" / "documents"
+LOCAL_MANIFEST = Path(__file__).parent.parent / "data" / "tables" / "documents.csv"
 MANIFEST_COLUMNS = ["cik", "company_name", "form", "filing_date", "accession_number",
                     "file_name", "is_primary", "size", "s3_key"]
 

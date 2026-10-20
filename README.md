@@ -1,165 +1,165 @@
-# sec_cik_pipeline
----
-##### AUTOMATIC (GiHub Actions)
-- run sec_cik_pipeline
-##### Manually : scraping the CIK's
-- /scrapers/sec_cik_scraper.py
-##### Manually : scraping the 253G2 filings (from CIK's)
-- /scrapers/sec_253G2_scraper.py
+# sec-scraper-aws
+
+Pipeline that rebuilds the Masterworks dataset (one LLC per artwork) from the documents published
+by the SEC on EDGAR, in the format of the dashboard's MastwerworksDB sheet
+
 
 ---
-##### Prepare text for ML Pipeline from filing :
-- ml_pipeline/lib/extract_sections.py
-- ml_pipeline/lib/txt_to_json.py
-- ml_pipeline/lib/bedrock_extraction.py
-##### saved file is in extractions.json
 
----
-## Utilisation
+## Structure
 
-Toutes les commandes se lancent depuis la racine du projet.
+```
+sec-scraper-aws/
+├── scrapers/
+│   ├── sec_cik_scraper.py          # scrapes the list of Masterworks LLCs
+│   ├── sec_filings_index.py        # for each LLC, lists its filings on EDGAR
+│   └── sec_documents_downloader.py # downloads the filings' documents to AWS S3
+│
+├── pipeline/lib/                   # Data extraction
+│   ├── extract_sections.py         # Script that splits an offering circular into sections
+│   ├── offering_extraction.py      # Script that runs LLM data extraction
+│   ├── offering_pipeline.py        # Script offering: pre-sale data, from the offering circulars
+│   ├── lifecycle_pipeline.py       # Script lifecycle: post-sale data, from the reports (no LLM)
+│   └── export_database_xlsx.py     # Script for Excel export
+│
+├── data/                           # local data, not versioned (the reference copy lives in S3)
+│   ├── all_ciks.json               # list of Masterworks LLCs (copy of S3 config/all_ciks.json)
+│   ├── formulaires_253G2/          # 253G2 offering circulars (.htm)
+│   ├── documents/                  # local copy of the downloaded filings (downloader --local)
+│   └── tables/                     # filings.csv, documents.csv, offering_table.csv,
+│                                   # lifecycle_table.csv, masterworks_database.xlsx
+│
+└── infrastructure/terraform/       # S3 bucket
+```
 
-### Installation (une seule fois)
+
+## usage
+
+ALL commands are run from the project root
+
+### installation (once)
 
     python3 -m venv .venv
     source .venv/bin/activate
     python -m pip install -r requirements.txt
 
-### Lancer le pipeline
+### running the pipeline
 
-Les étapes se lancent dans cet ordre. Chacune utilise le résultat de la précédente.
+run the steps in this order, each step uses the output of the previous one.
 
-    # 1. Liste des sociétés Masterworks
+    # 1 List of Masterworks LLCs
     python3 scrapers/sec_cik_scraper.py
 
-    # 2. Liste de leurs dépôts à la SEC
+    # 2 List of their SEC filings
     python3 scrapers/sec_filings_index.py
 
-    # 3. Téléchargement des documents (long)
+    # 3 Document download (long)
     caffeinate -i python3 scrapers/sec_documents_downloader.py
 
-    # 4. Extraction de l'offre, avec Bedrock (long, payant)
-    caffeinate -i python3 ml_pipeline/lib/offering_pipeline.py
+    # 4 Offering extraction, with Bedrock (long, paid)
+    caffeinate -i python3 pipeline/lib/offering_pipeline.py
 
-    # 5. Extraction de la vente et de la liquidation
-    python3 ml_pipeline/lib/lifecycle_pipeline.py
+    # 5 Sale and liquidation extraction
+    python3 pipeline/lib/lifecycle_pipeline.py
 
-    # 6. Création du tableau Excel
-    python3 ml_pipeline/lib/export_database_xlsx.py
+    # 6 Excel export
+    python3 pipeline/lib/export_database_xlsx.py
 
-Résultat : `ml_pipeline/tables/masterworks_database.xlsx`
+Output: `data/tables/masterworks_database.xlsx`
 
-### Options utiles
+`caffeinate -i` prevents the computer from sleeping during long steps if the LLC's treated are more than 100
 
-- `--limit 10` : ne traite que les 10 premières sociétés (pour tester).
-- `--force` (étape 4) : retraite les sociétés déjà faites, après une modification du code.
+### options
 
-Si une étape s'arrête en cours de route, relancez la même commande : elle reprend où elle s'était arrêtée.
+- `--limit 10`: processes only the first 10 LLCs 
+- `--only 009,021`: processes only these LLCs (rest is unchanged)
+- `--force` (for step 4): reprocesses LLCs that were already processed, after a code change, with `--only`, only the selected LLCs are reprocessed.
 
-### Quand relancer quoi
+If a step stops midway, run the same command again since it resumes where it stopped
 
-**Les étapes 1 à 3 (collecte) servent à récupérer les nouvelles données de la SEC.**
-Relancez-les quand :
-- c'est la première utilisation ;
-- vous voulez mettre le tableau à jour : de nouvelles sociétés et de nouveaux rapports
-  (ventes, liquidations) sont publiés régulièrement. Une fois par mois suffit, par exemple.
+### when to rerun what
 
-Le téléchargement (étape 3) n'a jamais besoin d'être forcé : il ne télécharge que les
-documents qu'il n'a pas encore, et saute les autres. Le relancer est donc rapide et sans risque.
+**Steps 1 to 3 == data-collection : fetch new data from the SEC**
 
-**Les étapes 4 à 6 (extraction) servent à transformer les documents en tableau.**
-Relancez-les :
-- après chaque collecte (étapes 1 à 3), pour traiter les nouveaux documents ;
-- après une modification du code, selon le fichier modifié :
+Rerun them when:
+- it is the first run;
+- need to update the table: new LLCs and new reports (sales, liquidations) are published
 
-| Fichier modifié | À relancer |
+The download (step 3) never needs to be forced: it only downloads the documents it does not
+have yet, and skips the other
+
+**Steps 4 to 6 (extraction) turn the documents into the table**
+
+Rerun them:
+- after each collection (steps 1 to 3), to process the new documents
+- after a code change, depending on the modified file:
+
+| modified file | what to rerun |
 |---|---|
-| `offering_extraction.py`, `offering_pipeline.py` ou `extract_sections.py` | Étape 4 avec `--force`, puis 5 et 6 |
-| `lifecycle_pipeline.py` | Étapes 5 et 6 |
-| `export_database_xlsx.py` | Étape 6 |
+| `offering_extraction.py` or `extract_sections.py` | Step 4 with `--force`, then 5 and 6 |
+| `offering_pipeline.py` | Step 4 (without `--force`), then 6 |
+| `lifecycle_pipeline.py` | Steps 5 and 6 |
+| `export_database_xlsx.py` | Step 6 |
 
-**Quand utiliser `--force` (étape 4 uniquement) ?**
-Seulement après une modification du code d'extraction. Sans `--force`, les sociétés déjà
-traitées gardent leur ancien résultat, même si le code a changé. Avec `--force`, toutes
-les sociétés sont retraitées : comptez plusieurs heures et quelques dollars d'appels à Bedrock.
-Après une simple collecte de nouvelles données, `--force` est inutile : les nouveaux
-documents sont traités automatiquement.
 
+Without `--force`, LLCs that were already
+processed keep their previous result, even if the code has changed. With `--force`, all LLCs are
+reprocessed, might take several hours
 
 ---
 
-### use cases
+## Use cases
 
-## Cas d'usage
+All commands are run from the project root, with the `.venv` environment active
 
-Toutes les commandes se lancent depuis la racine du projet, avec l'environnement `.venv` actif.
-
-### 1. Recréer seulement le tableau Excel
+### 1 Rebuild only the Excel table
 
 ```bash
-python3 ml_pipeline/lib/export_database_xlsx.py
+python3 pipeline/lib/export_database_xlsx.py
 ```
 
-Quelques secondes, gratuit.
-
-### 2. Après une modification de `lifecycle_pipeline.py` (ventes, liquidations)
+### 2 After changing `lifecycle_pipeline.py` (sales, liquidations)
 
 ```bash
-python3 ml_pipeline/lib/lifecycle_pipeline.py
-python3 ml_pipeline/lib/export_database_xlsx.py
+python3 pipeline/lib/lifecycle_pipeline.py
+python3 pipeline/lib/export_database_xlsx.py
 ```
 
-Quelques minutes, gratuit. Aucun appel à Bedrock.
-
-### 3. Après une modification de `offering_pipeline.py` (fusion des circulaires)
+### 3 After changing `offering_pipeline.py` (merging of offering circulars)
 
 ```bash
-python3 ml_pipeline/lib/offering_pipeline.py
-python3 ml_pipeline/lib/export_database_xlsx.py
+python3 pipeline/lib/offering_pipeline.py
+python3 pipeline/lib/export_database_xlsx.py
 ```
 
-Sans `--force` : les résultats déjà lus par Bedrock sont réutilisés. Gratuit.
 
-### 4. Après une modification de `offering_extraction.py` ou `extract_sections.py` (lecture des documents)
+### 4 After changing `offering_extraction.py` or `extract_sections.py` (document reading)
 
-Toutes les sociétés doivent être relues par Bedrock :
 
 ```bash
-caffeinate -i python3 ml_pipeline/lib/offering_pipeline.py --force
-python3 ml_pipeline/lib/lifecycle_pipeline.py
-python3 ml_pipeline/lib/export_database_xlsx.py
+caffeinate -i python3 pipeline/lib/offering_pipeline.py --force
+python3 pipeline/lib/lifecycle_pipeline.py
+python3 pipeline/lib/export_database_xlsx.py
 ```
 
-Plusieurs heures, quelques dollars.
 
-### 5. Corriger seulement quelques sociétés
+### 5 Fix only a few LLCs
 
 ```bash
-python3 ml_pipeline/lib/offering_pipeline.py --only 009,021,026 --force
-python3 ml_pipeline/lib/lifecycle_pipeline.py --only 009,021,026
-python3 ml_pipeline/lib/export_database_xlsx.py
+python3 pipeline/lib/offering_pipeline.py --only 009,021,026 --force
+python3 pipeline/lib/lifecycle_pipeline.py --only 009,021,026
+python3 pipeline/lib/export_database_xlsx.py
 ```
 
-Numéros sur 3 chiffres, séparés par des virgules, sans espace. Les autres sociétés restent intactes dans le tableau, et seules celles de la liste sont facturées.
 
-Pour retraiter automatiquement toutes les sociétés sans titre (ou au titre brouillé) :
-
-```bash
-LISTE=$(python3 -c "import csv,re; print(','.join(re.search(r'Masterworks (\d{3}),', r['issuer_name_edgar']).group(1) for r in csv.DictReader(open('ml_pipeline/tables/offering_table.csv')) if r['status'] == 'ok' and re.search(r'Masterworks (\d{3}),', r['issuer_name_edgar']) and (not r['title'] or re.search(r'(?:x\w){4,}', r['title']))))")
-caffeinate -i python3 ml_pipeline/lib/offering_pipeline.py --only "$LISTE" --force
-python3 ml_pipeline/lib/lifecycle_pipeline.py --only "$LISTE"
-python3 ml_pipeline/lib/export_database_xlsx.py
-```
-
-### 6. Récupérer les nouvelles sociétés et les nouveaux rapports de la SEC
+### 6 Fetch new LLCs and new SEC reports
 
 ```bash
 python3 scrapers/sec_cik_scraper.py
 python3 scrapers/sec_filings_index.py
 caffeinate -i python3 scrapers/sec_documents_downloader.py
-caffeinate -i python3 ml_pipeline/lib/offering_pipeline.py
-python3 ml_pipeline/lib/lifecycle_pipeline.py
-python3 ml_pipeline/lib/export_database_xlsx.py
+caffeinate -i python3 pipeline/lib/offering_pipeline.py
+python3 pipeline/lib/lifecycle_pipeline.py
+python3 pipeline/lib/export_database_xlsx.py
 ```
 
-Sans `--force` : seules les nouveautés sont traitées. Une fois par mois suffit.

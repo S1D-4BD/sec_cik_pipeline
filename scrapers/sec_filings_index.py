@@ -2,8 +2,8 @@
 """
 Usage :
     python scrapers/sec_filings_index.py                                   # tous les CIK de S3
-    python scrapers/sec_filings_index.py --limit 3                         # test sur 3 sociétés
-    python scrapers/sec_filings_index.py --ciks-file scrapers/all_ciks.json   # CIK depuis un fichier local
+    python scrapers/sec_filings_index.py --limit 3                         # test sur 3 sociétés (les autres sont conservées)
+    python scrapers/sec_filings_index.py --ciks-file data/all_ciks.json        # CIK depuis un fichier local
 """
 
 import argparse
@@ -38,7 +38,7 @@ DELAY = 0.15        # secondes entre deux requêtes : la SEC limite à 10 requê
 MAX_RETRIES = 3
 ###########################################################################
 
-LOCAL_OUTPUT = Path(__file__).parent / "tables" / "filings.csv"
+LOCAL_OUTPUT = Path(__file__).parent.parent / "data" / "tables" / "filings.csv"
 
 COLUMNS = ["cik", "list_name", "company_name", "form", "filing_date", "report_date",
            "accession_number", "primary_document", "primary_doc_description",
@@ -113,6 +113,18 @@ def load_ciks(ciks_file):
     return json.loads(response["Body"].read().decode("utf-8"))
 
 
+def merge_with_existing(rows):
+    """Mise à jour PARTIELLE : les dépôts des sociétés traitées remplacent les anciens, toutes les autres sont gardées.
+    La table de référence est celle de S3 (c'est elle que lisent les étapes suivantes), sinon la copie locale."""
+    try:
+        content = S3_CLIENT.get_object(Bucket=BUCKET_NAME, Key=S3_OUTPUT_KEY)["Body"].read().decode("utf-8")
+    except S3_CLIENT.exceptions.NoSuchKey:
+        content = LOCAL_OUTPUT.read_text(encoding="utf-8") if LOCAL_OUTPUT.exists() else ""
+    existing = list(csv.DictReader(io.StringIO(content)))
+    done = {r["cik"] for r in rows}
+    return [r for r in existing if r.get("cik") not in done] + rows
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ciks-file", help="Fichier JSON local {CIK: nom}, à la place de celui de S3.")
@@ -141,6 +153,10 @@ def main():
     if not all_rows:
         raise RuntimeError("Aucun dépôt récupéré : écriture annulée.")
 
+    # Avec --limit, les autres sociétés gardent leurs dépôts : un test n'écrase plus la table complète
+    if args.limit:
+        all_rows = merge_with_existing(all_rows)
+
     all_rows.sort(key=lambda r: (r["cik"], r["filing_date"], r["accession_number"]))
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=COLUMNS)
@@ -152,7 +168,7 @@ def main():
     LOCAL_OUTPUT.write_bytes(content)
     S3_CLIENT.put_object(Bucket=BUCKET_NAME, Key=S3_OUTPUT_KEY, Body=content, ContentType="text/csv")
 
-    logging.info(f"{len(all_rows)} dépôts pour {len(items) - len(failures)} sociétés "
+    logging.info(f"{len(all_rows)} dépôts ({len(items) - len(failures)} société(s) mise(s) à jour) "
                  f"-> {LOCAL_OUTPUT} et s3://{BUCKET_NAME}/{S3_OUTPUT_KEY}")
     if failures:
         logging.warning(f"{len(failures)} société(s) en échec :")

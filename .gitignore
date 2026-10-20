@@ -21,16 +21,11 @@ crash.log
 crash.*.log
 
 # Données téléchargées et produites (elles vivent dans S3)
-scrapers/formulaires_253G2/
-scrapers/documents/
-scrapers/tables/
-
-# Artefacts ML
-ml_pipeline/gliner_model/
-ml_pipeline/mlruns/
+data/
+trashbin/
+~$*
 
 # Sorties des tests lancés à la main
 /offering*.txt
 /offering*.json
 last_raw_response.json
-ml_pipeline/tables/

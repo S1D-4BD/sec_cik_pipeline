@@ -1,12 +1,57 @@
 name: Pipeline SEC
-
+## nique sa mere
 on:
   workflow_dispatch:
+    inputs:
+      step_1_ciks:
+        description: "(sec_cik_scraper.py)"
+        type: boolean
+        default: false
+      step_2_filings:
+        description: "(sec_filings_index.py)"
+        type: boolean
+        default: false
+      step_3_documents:
+        description: "(sec_documents_downloader.py)"
+        type: boolean
+        default: false
+      step_4_offering:
+        description: "(offering_pipeline.py)"
+        type: boolean
+        default: false
+      step_5_lifecycle:
+        description: "(lifecycle_pipeline.py)"
+        type: boolean
+        default: false
+      step_6_export:
+        description: "(export_database_xlsx.py)"
+        type: boolean
+        default: true
+      limit:
+        description: "--limit :  N first LLC"
+        type: string
+        default: ""
+      only:
+        description: "--only : <CIK list>"
+        type: string
+        default: ""
+      force:
+        description: "--force : rerun LLM"
+        type: boolean
+        default: false
+concurrency:
+  group: pipeline-sec
+  cancel-in-progress: false
 
 jobs:
-  executer-pipeline:
+  pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 360          
+    env:
+      AWS_REGION: us-east-2
+      LIMIT: ${{ inputs.limit }}
+      ONLY: ${{ inputs.only }}
+      FORCE: ${{ inputs.force && '--force' || '' }}
 
     steps:
       - name: Get code
@@ -28,10 +73,63 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-2
 
-      - name: Verify AWS connexion
+      - name: Check settings
+        env:
+          VAR_BUCKET: ${{ vars.S3_BUCKET_NAME }}
+          VAR_USER_AGENT: ${{ vars.SEC_USER_AGENT }}
         run: |
+          if [ -n "$LIMIT" ] && ! [[ "$LIMIT" =~ ^[0-9]+$ ]]; then
+            echo "::error::limit doit être un nombre entier (reçu : « $LIMIT »)"
+            exit 1
+          fi
+          if [ -n "$ONLY" ] && { ${{ inputs.step_2_filings }} || ${{ inputs.step_3_documents }}; }; then
+            echo "::warning::--only n'existe pas pour les étapes 2 et 3 : elles traitent toutes les LLC (ou --limit)"
+          fi
+          # Variables du dépôt (Settings > Secrets and variables > Actions > Variables) :
+          # transmises seulement si elles sont remplies, sinon les scripts gardent leurs valeurs par défaut
+          if [ -n "$VAR_BUCKET" ]; then echo "S3_BUCKET_NAME=$VAR_BUCKET" >> "$GITHUB_ENV"; fi
+          if [ -n "$VAR_USER_AGENT" ]; then echo "SEC_USER_AGENT=$VAR_USER_AGENT" >> "$GITHUB_ENV"; fi
           aws sts get-caller-identity
-          aws s3 ls s3://sec-filings20260901174817304000000001/config/
+          {
+            echo "### Réglages"
+            echo "| option | valeur |"
+            echo "|---|---|"
+            echo "| étapes | ${{ inputs.step_1_ciks && '1 ' || '' }}${{ inputs.step_2_filings && '2 ' || '' }}${{ inputs.step_3_documents && '3 ' || '' }}${{ inputs.step_4_offering && '4 ' || '' }}${{ inputs.step_5_lifecycle && '5 ' || '' }}${{ inputs.step_6_export && '6' || '' }} |"
+            echo "| --limit | ${LIMIT:-toutes} |"
+            echo "| --only | ${ONLY:-toutes} |"
+            echo "| --force | ${{ inputs.force }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Execute scraper
-        run: python scrapers/sec_253G2_scrapper.py
+      - name: 1. Liste des LLC
+        if: inputs.step_1_ciks
+        run: python scrapers/sec_cik_scraper.py
+
+      - name: 2. Dépôts EDGAR
+        if: inputs.step_2_filings
+        run: python scrapers/sec_filings_index.py ${LIMIT:+--limit "$LIMIT"}
+
+      - name: 3. Téléchargement des documents
+        if: inputs.step_3_documents
+        run: python scrapers/sec_documents_downloader.py ${LIMIT:+--limit "$LIMIT"}
+
+      - name: 4. Extraction de l'offre (Bedrock)
+        if: inputs.step_4_offering
+        run: python pipeline/lib/offering_pipeline.py ${LIMIT:+--limit "$LIMIT"} ${ONLY:+--only "$ONLY"} $FORCE
+
+      - name: 5. Vente et liquidation
+        if: inputs.step_5_lifecycle
+        run: python pipeline/lib/lifecycle_pipeline.py ${LIMIT:+--limit "$LIMIT"} ${ONLY:+--only "$ONLY"}
+
+      - name: 6. Export Excel
+        if: inputs.step_6_export
+        run: python pipeline/lib/export_database_xlsx.py
+
+      # Les tables produites, téléchargeables depuis la page de l'exécution (elles sont aussi dans S3)
+      - name: Upload tables
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tables
+          path: data/tables/
+          if-no-files-found: ignore
+          retention-days: 30

@@ -4,17 +4,17 @@ Exporte la table produite par offering_pipeline.py au format EXACT de la feuille
 du classeur Dashboard_Masterworks_SEC_model : mêmes 56 en-têtes, mêmes colonnes (A à BD),
 mêmes formules Excel pour les colonnes calculées.
 
-    tables/offering_table.csv  (offering_pipeline.py : l'offre)
-  + tables/lifecycle_table.csv (lifecycle_pipeline.py : clôture, vente, liquidation)
-    ->  tables/masterworks_database.xlsx  (feuille « Database » + « Notes »)
+    data/tables/offering_table.csv  (offering_pipeline.py : l'offre)
+  + data/tables/lifecycle_table.csv (lifecycle_pipeline.py : clôture, vente, liquidation)
+    ->  data/tables/masterworks_database.xlsx  (feuille « Database » + « Notes »)
 
 Couleurs (convention des modèles financiers) :
     bleu  = valeur lue dans les documents SEC par le pipeline (ou dans EDGAR)
     noir  = formule Excel, identique à celle du classeur d'origine
 
 Usage (depuis la racine du projet) :
-    python ml_pipeline/lib/export_database_xlsx.py
-    python ml_pipeline/lib/export_database_xlsx.py --input ml_pipeline/tables/offering_table.csv
+    python pipeline/lib/export_database_xlsx.py
+    python pipeline/lib/export_database_xlsx.py --input data/tables/offering_table.csv
 
 Bibliothèques : pip install openpyxl boto3
 """
@@ -40,22 +40,14 @@ S3_INPUT_KEY = "tables/offering_table.csv"
 S3_LIFECYCLE_KEY = "tables/lifecycle_table.csv"
 S3_OUTPUT_KEY = "tables/masterworks_database.xlsx"
 
-TABLES_DIR = Path(__file__).parent.parent / "tables"
+TABLES_DIR = Path(__file__).parent.parent.parent / "data" / "tables"
 LOCAL_INPUT = TABLES_DIR / "offering_table.csv"
 LOCAL_LIFECYCLE = TABLES_DIR / "lifecycle_table.csv"
 
-# « Date of sale agreement » : la date de CONCLUSION de la vente, comme dans l'ancien Excel.
-# Pour prendre la date de l'ACCORD de vente à la place, remplacez par "sale_agreement_date".
+
 SALE_DATE_FIELD = "sale_closing_date"
 LOCAL_OUTPUT = TABLES_DIR / "masterworks_database.xlsx"
 
-
-# =====================================================================================
-# LES 56 COLONNES DE LA FEUILLE « Database », dans l'ordre (A -> BD)
-#   source : nom de la colonne de offering_table.csv (valeur saisie, en bleu)
-#   formula : formule Excel du classeur d'origine, {r} = numéro de ligne (en noir)
-#   format : format d'affichage Excel
-# =====================================================================================
 D, USD, USD2, INT, PCT, TXT = "yyyy-mm-dd", "$#,##0", "$#,##0.00", "#,##0", "0.0%", "@"
 
 COLUMNS = [
@@ -97,8 +89,6 @@ COLUMNS = [
     ("Liquidated ?", {"formula": '=IF(AI{r}="yes",1,0)', "format": "0"}),
     ("Buyer", {"source": "buyer", "format": TXT}),
     ("Artwork Sale Price", {"source": "sale_price", "format": USD}),
-    # Colonnes de vente : leurs formules ne sont écrites que si « LLC Liquidated? » est renseigné
-    # ET si les données dont elles dépendent (« needs ») sont toutes présentes.
     ("Gross profit based on Asset Issuing price\n$", {"formula": '=IF(AI{r}="no","",IFERROR(AL{r}-AB{r},"n.a"))', "sale": True, "needs": ['sale_price', 'purchase_price_usd', 'true_up'], "format": USD}),
     ("Gross profit based on Asset Issuing price\n%", {"formula": '=IF(AI{r}="no","",AM{r}/AL{r})', "sale": True, "needs": ['sale_price', 'purchase_price_usd', 'true_up'], "format": PCT}),
     ("Net Liquidation Proceeds", {"source": "net_liquidation_proceeds", "format": USD}),
@@ -251,7 +241,7 @@ def build_workbook(rows):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", help="offering_table.csv à exporter (par défaut : ml_pipeline/tables/, sinon S3).")
+    parser.add_argument("--input", help="offering_table.csv à exporter (par défaut : data/tables/, sinon S3).")
     args = parser.parse_args()
 
     lifecycle = read_lifecycle()

@@ -9,14 +9,14 @@ Cancellation »), et publie depuis 2021 un tableau « Net Annualized Return Calc
 Le code les lit directement. Chaque valeur garde la phrase (ou la ligne du tableau) dont elle vient.
 
     filings.csv + documents.csv  ->  textes dans S3 (raw/)  ->  lecture des tournures et du tableau
-                                 ->  tables/lifecycle_table.csv  (une ligne par société)
+                                 ->  data/tables/lifecycle_table.csv  (une ligne par société)
 
 Une valeur absente des documents reste VIDE : rien n'est déduit ni complété.
 
 Usage (depuis la racine du projet) :
-    python ml_pipeline/lib/lifecycle_pipeline.py --limit 10
-    python ml_pipeline/lib/lifecycle_pipeline.py --only 009,021          # seulement ces sociétés (le reste de la table est conservé)
-    python ml_pipeline/lib/lifecycle_pipeline.py
+    python pipeline/lib/lifecycle_pipeline.py --limit 10
+    python pipeline/lib/lifecycle_pipeline.py --only 009,021          # seulement ces sociétés (le reste de la table est conservé)
+    python pipeline/lib/lifecycle_pipeline.py
 """
 
 import argparse
@@ -41,7 +41,7 @@ S3_CLIENT = boto3.client("s3", region_name=AWS_REGION)
 S3_FILINGS_KEY = "tables/filings.csv"
 S3_MANIFEST_KEY = "tables/documents.csv"
 S3_TABLE_KEY = "tables/lifecycle_table.csv"
-LOCAL_TABLE = Path(__file__).parent.parent / "tables" / "lifecycle_table.csv"
+LOCAL_TABLE = Path(__file__).parent.parent.parent / "data" / "tables" / "lifecycle_table.csv"
 
 LIFECYCLE_FORMS = {"1-U", "1-U/A", "1-SA", "1-SA/A", "1-K", "1-K/A"}
 

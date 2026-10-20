@@ -7,7 +7,7 @@ Enchaîne, pour chaque société, les étapes qui remplissent la partie « offre
                                                                pour un supplément court)
                  ->  offering_extraction.py                   (Nova + contrôles stricts, nom EDGAR)
                  ->  fusion : la valeur du document LE PLUS RÉCENT l'emporte, chaque changement est noté
-                 ->  une ligne par société dans tables/offering_table.csv
+                 ->  une ligne par société dans data/tables/offering_table.csv
 
 La table contient aussi les dates lues directement dans EDGAR (1-A, QUALIF, lancement, 1-Z) :
 aucune n'est demandée au modèle.
@@ -16,11 +16,11 @@ Le script peut être interrompu puis relancé : une société déjà traitée (s
 dans S3, sous extractions/) n'est pas renvoyée à Nova. --force les retraite toutes.
 
 Usage (depuis la racine du projet) :
-    python ml_pipeline/lib/offering_pipeline.py --limit 3        # test sur 3 sociétés
-    python ml_pipeline/lib/offering_pipeline.py --only 009,021          # seulement ces sociétés (le reste de la table est conservé)
-    python ml_pipeline/lib/offering_pipeline.py --only 009 --force      # retraite seulement 009 (relance Bedrock pour elle seule)
-    python ml_pipeline/lib/offering_pipeline.py                  # toutes les sociétés
-    python ml_pipeline/lib/offering_pipeline.py --force          # retraite tout (après un changement de règles)
+    python pipeline/lib/offering_pipeline.py --limit 3        # test sur 3 sociétés
+    python pipeline/lib/offering_pipeline.py --only 009,021          # seulement ces sociétés (le reste de la table est conservé)
+    python pipeline/lib/offering_pipeline.py --only 009 --force      # retraite seulement 009 (relance Bedrock pour elle seule)
+    python pipeline/lib/offering_pipeline.py                  # toutes les sociétés
+    python pipeline/lib/offering_pipeline.py --force          # retraite tout (après un changement de règles)
 
 Nécessite, dans le même dossier : extract_sections.py et offering_extraction.py.
 """
@@ -41,10 +41,7 @@ from botocore.exceptions import ClientError
 
 sys.path.insert(0, str(Path(__file__).parent))
 import extract_sections as sections_lib                    # noqa: E402
-try:
-    import offering_extraction as offering_lib             # noqa: E402  (le nom de votre fichier)
-except ImportError:
-    import offering_extract as offering_lib                # noqa: E402  (le nom d'origine)
+import offering_extraction as offering_lib                 # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -58,7 +55,7 @@ RAW_PREFIX = "raw"
 EXTRACTIONS_PREFIX = "extractions"
 #########################################################################
 
-LOCAL_TABLE = Path(__file__).parent.parent / "tables" / "offering_table.csv"
+LOCAL_TABLE = Path(__file__).parent.parent.parent / "data" / "tables" / "offering_table.csv"
 
 CIRCULAR_FORMS = ("253G2", "253G3")
 SHORT_DOCUMENT = 30_000      # en dessous (en caractères) : un supplément court, envoyé en entier
