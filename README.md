@@ -101,7 +101,7 @@ If a step stops midway, run the same command again: it resumes where it stopped
 **Steps 1 to 3 (collection) fetch new data from the SEC.**
 Rerun them when:
 - it is the first run;
-- you want to update the table: new LLCs and new reports (sales, liquidations) are published
+- you want to update the table: new LLCs and new reports (sales, liquidations) are published 
   regularly. Once a month is enough, for example.
 
 The download (step 3) never needs to be forced: it only downloads the documents it does not

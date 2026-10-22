@@ -20,7 +20,7 @@ Une valeur absente des documents reste VIDE.
 
 Usage (depuis la racine du projet) :
     python3 pipeline/lib/vault_pipeline.py
-    python3 pipeline/lib/vault_pipeline.py --only "Vault 5"
+    python3 pipeline/lib/vault_pipeline.py --only vault5
 """
 
 import argparse
@@ -281,6 +281,15 @@ def read_csv_source(local, s3_key, label):
     return list(csv.DictReader(io.StringIO(raw.decode("utf-8"))))
 
 
+def read_existing(local_path, s3_key):
+    """La table déjà produite : locale d'abord, sinon celle de S3 (ex. sur GitHub Actions, où data/ est vide).
+    Sans elle, un lancement avec --only effacerait les lignes des autres vaults."""
+    if local_path.exists():
+        return list(csv.DictReader(open(local_path, encoding="utf-8")))
+    raw = s3_read(s3_key)
+    return list(csv.DictReader(io.StringIO(raw.decode("utf-8")))) if raw else []
+
+
 def write_csv(rows, columns, local_path, s3_key):
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=columns, extrasaction="ignore")
@@ -383,6 +392,7 @@ def main():
         if re.match(r"Masterworks Vault \d+, LLC", f["company_name"]):
             vaults.setdefault(f["cik"], []).append(f)
     if args.only:
+        # Les espaces sont ignorés : « vault5 », « Vault 5 » et « VAULT5 » désignent la même vault
         squash = lambda text: re.sub(r"\s+", "", text.lower())
         wanted = [squash(w) for w in args.only.split(",") if w.strip()]
         vaults = {c: v for c, v in vaults.items()
@@ -390,12 +400,8 @@ def main():
     logging.info(f"{len(vaults)} vault(s) à traiter")
 
     # On repart des tables existantes : une vault non retraitée garde ses lignes
-    existing = []
-    if LOCAL_VAULT.exists():
-        existing = list(csv.DictReader(open(LOCAL_VAULT, encoding="utf-8")))
-    exits = {}
-    if LOCAL_EXITS.exists():
-        exits = {r["issuer_name"]: r for r in csv.DictReader(open(LOCAL_EXITS, encoding="utf-8"))}
+    existing = read_existing(LOCAL_VAULT, S3_VAULT_KEY)
+    exits = {r["issuer_name"]: r for r in read_existing(LOCAL_EXITS, S3_EXITS_KEY)}
 
     all_rows = [r for r in existing if r.get("vault_cik") not in vaults]
     for n, (cik, vault_filings) in enumerate(sorted(vaults.items(), key=lambda x: x[1][0]["company_name"]), 1):

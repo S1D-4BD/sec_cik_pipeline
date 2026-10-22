@@ -1,30 +1,33 @@
 name: Pipeline SEC
-## nique sa mere
 on:
   workflow_dispatch:
     inputs:
       step_1_ciks:
-        description: "(sec_cik_scraper.py)"
+        description: "sec_cik_scraper.py"
         type: boolean
         default: false
       step_2_filings:
-        description: "(sec_filings_index.py)"
+        description: "sec_filings_index.py"
         type: boolean
         default: false
       step_3_documents:
-        description: "(sec_documents_downloader.py)"
+        description: "sec_documents_downloader.py"
         type: boolean
         default: false
       step_4_offering:
-        description: "(offering_pipeline.py)"
+        description: "offering_pipeline.py"
         type: boolean
         default: false
       step_5_lifecycle:
-        description: "(lifecycle_pipeline.py)"
+        description: "lifecycle_pipeline.py"
         type: boolean
         default: false
-      step_6_export:
-        description: "(export_database_xlsx.py)"
+      step_6_vaults:
+        description: "vault_pipeline.py"
+        type: boolean
+        default: false
+      step_7_export:
+        description: "export_database_xlsx.py"
         type: boolean
         default: true
       limit:
@@ -32,7 +35,11 @@ on:
         type: string
         default: ""
       only:
-        description: "--only : <CIK list>"
+        description: "--only (LLC) : N first LLC"
+        type: string
+        default: ""
+      vaults_only:
+        description: "--only (step 6) : vaults ==  vault5,vault12"
         type: string
         default: ""
       force:
@@ -51,6 +58,7 @@ jobs:
       AWS_REGION: us-east-2
       LIMIT: ${{ inputs.limit }}
       ONLY: ${{ inputs.only }}
+      VAULTS_ONLY: ${{ inputs.vaults_only }}
       FORCE: ${{ inputs.force && '--force' || '' }}
 
     steps:
@@ -79,24 +87,25 @@ jobs:
           VAR_USER_AGENT: ${{ vars.SEC_USER_AGENT }}
         run: |
           if [ -n "$LIMIT" ] && ! [[ "$LIMIT" =~ ^[0-9]+$ ]]; then
-            echo "::error::limit doit être un nombre entier (reçu : « $LIMIT »)"
+            echo "::error::limit has to be integer (received: « $LIMIT »)"
             exit 1
           fi
           if [ -n "$ONLY" ] && { ${{ inputs.step_2_filings }} || ${{ inputs.step_3_documents }}; }; then
-            echo "::warning::--only n'existe pas pour les étapes 2 et 3 : elles traitent toutes les LLC (ou --limit)"
+            echo "::warning::--only does not exist for steps 2 and 3: they process all LLCs (or --limit)"
           fi
-          # Variables du dépôt (Settings > Secrets and variables > Actions > Variables) :
-          # transmises seulement si elles sont remplies, sinon les scripts gardent leurs valeurs par défaut
+          # Repository variables (Settings > Secrets and variables > Actions > Variables):
+          # passed only if they are set, otherwise the scripts keep their default values
           if [ -n "$VAR_BUCKET" ]; then echo "S3_BUCKET_NAME=$VAR_BUCKET" >> "$GITHUB_ENV"; fi
           if [ -n "$VAR_USER_AGENT" ]; then echo "SEC_USER_AGENT=$VAR_USER_AGENT" >> "$GITHUB_ENV"; fi
           aws sts get-caller-identity
           {
-            echo "### Réglages"
-            echo "| option | valeur |"
+            echo "### Settings"
+            echo "| option | value |"
             echo "|---|---|"
-            echo "| étapes | ${{ inputs.step_1_ciks && '1 ' || '' }}${{ inputs.step_2_filings && '2 ' || '' }}${{ inputs.step_3_documents && '3 ' || '' }}${{ inputs.step_4_offering && '4 ' || '' }}${{ inputs.step_5_lifecycle && '5 ' || '' }}${{ inputs.step_6_export && '6' || '' }} |"
+            echo "| étapes | ${{ inputs.step_1_ciks && '1 ' || '' }}${{ inputs.step_2_filings && '2 ' || '' }}${{ inputs.step_3_documents && '3 ' || '' }}${{ inputs.step_4_offering && '4 ' || '' }}${{ inputs.step_5_lifecycle && '5 ' || '' }}${{ inputs.step_6_vaults && '6 ' || '' }}${{ inputs.step_7_export && '7' || '' }} |"
             echo "| --limit | ${LIMIT:-toutes} |"
-            echo "| --only | ${ONLY:-toutes} |"
+            echo "| --only (LLC) | ${ONLY:-toutes} |"
+            echo "| --only (vaults) | ${VAULTS_ONLY:-toutes} |"
             echo "| --force | ${{ inputs.force }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -120,8 +129,12 @@ jobs:
         if: inputs.step_5_lifecycle
         run: python pipeline/lib/lifecycle_pipeline.py ${LIMIT:+--limit "$LIMIT"} ${ONLY:+--only "$ONLY"}
 
+      - name: Vault series and sales history
+        if: inputs.step_6_vaults
+        run: python pipeline/lib/vault_pipeline.py ${VAULTS_ONLY:+--only "$VAULTS_ONLY"}
+
       - name: Export Excel
-        if: inputs.step_6_export
+        if: inputs.step_7_export
         run: python pipeline/lib/export_database_xlsx.py
 
       - name: Upload tables
