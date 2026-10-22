@@ -100,31 +100,30 @@ jobs:
             echo "| --force | ${{ inputs.force }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: 1. Liste des LLC
+      - name: LLC list
         if: inputs.step_1_ciks
         run: python scrapers/sec_cik_scraper.py
 
-      - name: 2. Dépôts EDGAR
+      - name: EDGAR filings
         if: inputs.step_2_filings
         run: python scrapers/sec_filings_index.py ${LIMIT:+--limit "$LIMIT"}
 
-      - name: 3. Téléchargement des documents
+      - name: Download documents
         if: inputs.step_3_documents
         run: python scrapers/sec_documents_downloader.py ${LIMIT:+--limit "$LIMIT"}
 
-      - name: 4. Extraction de l'offre (Bedrock)
+      - name: Offering extraction (Bedrock)
         if: inputs.step_4_offering
         run: python pipeline/lib/offering_pipeline.py ${LIMIT:+--limit "$LIMIT"} ${ONLY:+--only "$ONLY"} $FORCE
 
-      - name: 5. Vente et liquidation
+      - name: Sale and liquidation
         if: inputs.step_5_lifecycle
         run: python pipeline/lib/lifecycle_pipeline.py ${LIMIT:+--limit "$LIMIT"} ${ONLY:+--only "$ONLY"}
 
-      - name: 6. Export Excel
+      - name: Export Excel
         if: inputs.step_6_export
         run: python pipeline/lib/export_database_xlsx.py
 
-      # Les tables produites, téléchargeables depuis la page de l'exécution (elles sont aussi dans S3)
       - name: Upload tables
         if: always()
         uses: actions/upload-artifact@v4
