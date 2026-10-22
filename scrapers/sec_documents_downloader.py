@@ -58,6 +58,7 @@ MAX_RETRIES = 3
 #   1-K / 1-SA    : rapports annuels et semestriels (clôture, liquidation)
 #   1-Z           : fin de l'offre
 FORMS = {"253G2", "253G3", "1-U", "1-U/A", "1-K", "1-K/A", "1-SA", "1-SA/A", "1-Z", "1-Z/A"}
+VAULT_FORMS = {"1-A", "1-A/A", "1-A POS"}
 TEXT_EXTENSIONS = (".htm", ".html", ".xml", ".txt", ".pdf")
 ###########################################################################
 
@@ -179,8 +180,15 @@ def main():
     ciks = list(dict.fromkeys(f["cik"] for f in filings))
     if args.limit:
         ciks = ciks[: args.limit]
-    todo = [f for f in filings if f["cik"] in set(ciks) and f["form"] in FORMS]
-    logging.info(f"{len(todo)} dépôts à traiter pour {len(ciks)} société(s), types : {sorted(FORMS)}")
+    todo = []
+    for f in filings:
+        if f["cik"] not in set(ciks):
+            continue                      # société pas sélectionnée
+        if f["form"] in FORMS:
+            todo.append(f)                # type habituel : pour tout le monde
+        elif f["form"] in VAULT_FORMS and "vault" in f["company_name"].lower():
+            todo.append(f)                # 1-A : seulement pour les vaults
+    logging.info(f"{len(todo)} dépôts à traiter pour {len(ciks)} société(s), types : {sorted(FORMS | VAULT_FORMS)}")
 
     # L'inventaire existant est conservé : on y ajoute les nouveaux fichiers
     manifest = {r["s3_key"]: r for r in read_s3_csv(S3_MANIFEST_KEY)}

@@ -13,14 +13,14 @@ Chaque valeur doit venir avec sa preuve (les mots exacts du document), et le COD
 Une valeur qui échoue à un seul contrôle est SUPPRIMÉE, et la raison est enregistrée.
 
 Usage :
-    python pipeline/lib/offering_extraction.py offering.txt --issuer "Masterworks 001, LLC"
+    python ml_pipeline/lib/offering_extract.py offering.txt --issuer "Masterworks 001, LLC"
     -> offering_extractions.json (valeurs vérifiées) + offering_audit.json (preuves, suppressions)
 
     --issuer : le nom officiel de la société chez EDGAR (colonne company_name de filings.csv).
                Il est plus sûr que celui lu par le modèle. Sans --issuer, le modèle le cherche.
 
 Depuis votre code :
-    from offering_extraction import process_offering
+    from offering_extract import process_offering
     result = process_offering(texte, issuer_name="Masterworks 001, LLC")   -> OfferingResult
 
 Aucun fichier local requis. Bibliothèques : pip install boto3 pydantic
@@ -524,6 +524,18 @@ def artwork_facts(text):
     return facts
 
 
+def unscramble(text):
+    """Retire les « x » de brouillage intercalés entre chaque caractère : « xUxnxtxixtxlxexdx » -> « Untitled ».
+    Ne touche à rien si le texte n'a pas exactement ce motif (un « x » sur deux)."""
+    core = text.strip()
+    if len(core) >= 5 and re.fullmatch(r"(?:[xX].)+[xX]?", core):
+        return core[1::2]
+    m = re.fullmatch(r"((?:[xX].)+[xX]?)(\s.*)", core)          # « xPxuxmxpxkxixnx (TOWSSO) »
+    if m and len(m.group(1)) >= 5:
+        return m.group(1)[1::2] + m.group(2)
+    return text
+
+
 def coherence_warnings(r):
     """Contrôles de bon sens entre les champs : signalés, jamais corrigés automatiquement."""
     w = []
@@ -709,6 +721,10 @@ def process_offering(text, client=None, issuer_name=None) -> OfferingResult:
     # « “Rat & Heart” » : les guillemets autour du titre ne font pas partie du titre
     if values.get("title"):
         values["title"] = values["title"].strip().strip('"“”\'‘’').strip() or None
+    # Filet de sécurité : « xRxaxtx x&x xHxexaxrxtx » -> « Rat & Heart » (texte anti-copie mal retiré)
+    for field in ("title", "artist_name"):
+        if values.get(field):
+            values[field] = unscramble(values[field])
 
     # « Coup de Vent, or Gust of Wind » : le titre d'origine, sans sa traduction
     if values.get("title") and re.search(r",\s+or\s+", values["title"]):

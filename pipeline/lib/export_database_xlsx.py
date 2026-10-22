@@ -4,17 +4,17 @@ Exporte la table produite par offering_pipeline.py au format EXACT de la feuille
 du classeur Dashboard_Masterworks_SEC_model : mêmes 56 en-têtes, mêmes colonnes (A à BD),
 mêmes formules Excel pour les colonnes calculées.
 
-    data/tables/offering_table.csv  (offering_pipeline.py : l'offre)
-  + data/tables/lifecycle_table.csv (lifecycle_pipeline.py : clôture, vente, liquidation)
-    ->  data/tables/masterworks_database.xlsx  (feuille « Database » + « Notes »)
+    tables/offering_table.csv  (offering_pipeline.py : l'offre)
+  + tables/lifecycle_table.csv (lifecycle_pipeline.py : clôture, vente, liquidation)
+    ->  tables/masterworks_database.xlsx  (feuille « Database » + « Notes »)
 
 Couleurs (convention des modèles financiers) :
     bleu  = valeur lue dans les documents SEC par le pipeline (ou dans EDGAR)
     noir  = formule Excel, identique à celle du classeur d'origine
 
 Usage (depuis la racine du projet) :
-    python pipeline/lib/export_database_xlsx.py
-    python pipeline/lib/export_database_xlsx.py --input data/tables/offering_table.csv
+    python ml_pipeline/lib/export_database_xlsx.py
+    python ml_pipeline/lib/export_database_xlsx.py --input ml_pipeline/tables/offering_table.csv
 
 Bibliothèques : pip install openpyxl boto3
 """
@@ -38,16 +38,28 @@ AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
 BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "sec-filings20260901174817304000000001")
 S3_INPUT_KEY = "tables/offering_table.csv"
 S3_LIFECYCLE_KEY = "tables/lifecycle_table.csv"
+S3_VAULT_KEY = "tables/vault_table.csv"          # vault_pipeline.py : une ligne par série de vault
+S3_EXITS_KEY = "tables/exits_table.csv"          # vault_pipeline.py : historique des ventes de Masterworks
 S3_OUTPUT_KEY = "tables/masterworks_database.xlsx"
 
-TABLES_DIR = Path(__file__).parent.parent.parent / "data" / "tables"
+TABLES_DIR = Path(__file__).resolve().parents[2] / "data" / "tables"
 LOCAL_INPUT = TABLES_DIR / "offering_table.csv"
 LOCAL_LIFECYCLE = TABLES_DIR / "lifecycle_table.csv"
+LOCAL_VAULT = TABLES_DIR / "vault_table.csv"
+LOCAL_EXITS = TABLES_DIR / "exits_table.csv"
 
-
-SALE_DATE_FIELD = "sale_closing_date"
+# « Date of sale agreement » : la date de CONCLUSION de la vente, comme dans l'ancien Excel.
+# Pour prendre la date de l'ACCORD de vente à la place, remplacez par "sale_agreement_date".
+SALE_DATE_FIELD = "sale_date"   # calculé dans main() : voir l'en-tête « Date of sale agreement »
 LOCAL_OUTPUT = TABLES_DIR / "masterworks_database.xlsx"
 
+
+# =====================================================================================
+# LES 56 COLONNES DE LA FEUILLE « Database », dans l'ordre (A -> BD)
+#   source : nom de la colonne de offering_table.csv (valeur saisie, en bleu)
+#   formula : formule Excel du classeur d'origine, {r} = numéro de ligne (en noir)
+#   format : format d'affichage Excel
+# =====================================================================================
 D, USD, USD2, INT, PCT, TXT = "yyyy-mm-dd", "$#,##0", "$#,##0.00", "#,##0", "0.0%", "@"
 
 COLUMNS = [
@@ -89,6 +101,8 @@ COLUMNS = [
     ("Liquidated ?", {"formula": '=IF(AI{r}="yes",1,0)', "format": "0"}),
     ("Buyer", {"source": "buyer", "format": TXT}),
     ("Artwork Sale Price", {"source": "sale_price", "format": USD}),
+    # Colonnes de vente : leurs formules ne sont écrites que si « LLC Liquidated? » est renseigné
+    # ET si les données dont elles dépendent (« needs ») sont toutes présentes.
     ("Gross profit based on Asset Issuing price\n$", {"formula": '=IF(AI{r}="no","",IFERROR(AL{r}-AB{r},"n.a"))', "sale": True, "needs": ['sale_price', 'purchase_price_usd', 'true_up'], "format": USD}),
     ("Gross profit based on Asset Issuing price\n%", {"formula": '=IF(AI{r}="no","",AM{r}/AL{r})', "sale": True, "needs": ['sale_price', 'purchase_price_usd', 'true_up'], "format": PCT}),
     ("Net Liquidation Proceeds", {"source": "net_liquidation_proceeds", "format": USD}),
@@ -112,8 +126,8 @@ assert len(COLUMNS) == 56, "la feuille Database a 56 colonnes"
 
 # Remarques sur les formules d'origine, affichées en commentaire sur l'en-tête concerné
 HEADER_NOTES = {
-    "Date of sale agreement": "Date de CONCLUSION de la vente (« consummated »), comme dans l'ancien Excel. "
-        "La date de l'accord (« agreed to sell ») est dans lifecycle_table.csv, colonne sale_agreement_date.",
+    "Date of sale agreement": "« Date of Sale Agreement » de l'historique des ventes publié par Masterworks "
+        "(c'est la source de l'ancien Excel). À défaut, la date de conclusion de la vente (« consummated »).",
     "Estimated Date of Proceeds Distribution to Investors": "Date de dépôt du 1-U qui annonce que les actionnaires "
         "« have received a distribution ».",
     "Cash from Class B Preferred Shares held by MW": "Ligne « Class B Profit Share » du tableau de liquidation.",
@@ -167,6 +181,26 @@ def read_lifecycle():
     keep = lambda r: {k: v for k, v in r.items() if k not in ("issuer_name_edgar", "status", "warnings", "sources",
                                                                 "n_documents_read")}
     return {r["cik"]: keep(r) for r in rows}
+
+
+def read_optional_csv(local_path, s3_key):
+    """Une table facultative : locale d'abord, sinon S3, sinon vide."""
+    if local_path.exists():
+        return list(csv.DictReader(open(local_path, encoding="utf-8")))
+    try:
+        body = boto3.client("s3", region_name=AWS_REGION).get_object(Bucket=BUCKET_NAME, Key=s3_key)["Body"]
+        return list(csv.DictReader(io.StringIO(body.read().decode("utf-8"))))
+    except Exception:
+        return []
+
+
+def issuer_key(name):
+    return re.sub(r"[^a-z0-9()]", "", str(name).lower())
+
+
+def natural_key(name):
+    """« Masterworks 9 » avant « Masterworks 10 », les LLC avant les vaults, puis les séries dans l'ordre."""
+    return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", str(name))]
 
 
 def read_input(path):
@@ -241,7 +275,7 @@ def build_workbook(rows):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", help="offering_table.csv à exporter (par défaut : data/tables/, sinon S3).")
+    parser.add_argument("--input", help="offering_table.csv à exporter (par défaut : ml_pipeline/tables/, sinon S3).")
     args = parser.parse_args()
 
     lifecycle = read_lifecycle()
@@ -256,7 +290,19 @@ def main():
             r["execution_year"] = year.group(2)
         if not r.get("artist_name") and r.get("artwork_artist"):
             r["artist_name"] = r["artwork_artist"]
-    rows = sorted(rows, key=lambda r: r.get("issuer_name_edgar", ""))
+    # Les séries des vaults : une ligne par série (vault_pipeline.py)
+    vault_rows = read_optional_csv(LOCAL_VAULT, S3_VAULT_KEY)
+    rows += vault_rows
+    # L'historique des ventes publié par Masterworks : date de l'accord de vente et rendement (IRR)
+    exits = {issuer_key(e["issuer_name"]): e for e in read_optional_csv(LOCAL_EXITS, S3_EXITS_KEY)}
+    for r in rows:
+        e = exits.get(issuer_key(r.get("issuer_name_edgar", "")), {})
+        r["sale_date"] = e.get("sale_agreement_date") or r.get("sale_agreement_date") if "vault_cik" in r else \
+            e.get("sale_agreement_date") or r.get("sale_closing_date")
+        if not r.get("irr") and e.get("irr"):
+            r["irr"] = e["irr"]
+    rows = sorted(rows, key=lambda r: natural_key(r.get("issuer_name_edgar", "")))
+    print(f"séries de vaults : {len(vault_rows)} | ventes de l'historique Masterworks : {len(exits)}")
     print(f"fin de vie disponible pour {sum(1 for r in rows if r['cik'] in lifecycle)}/{len(rows)} société(s)")
     wb = build_workbook(rows)
     LOCAL_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
