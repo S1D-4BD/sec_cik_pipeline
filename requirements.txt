@@ -1,7 +1,17 @@
-boto3==1.42.97
-requests==2.32.5
-beautifulsoup4==4.14.2
+# boto3==1.42.97
+# requests==2.32.5
+# beautifulsoup4==4.14.2
+# lxml
+# nltk
+# gliner
+# playwright
+# pydantic 
+# openpyxl 
+# psycopg[binary]
+
+boto3
+requests
+beautifulsoup4
 lxml
-nltk
-gliner
-playwright
+pydantic
+openpyxl
