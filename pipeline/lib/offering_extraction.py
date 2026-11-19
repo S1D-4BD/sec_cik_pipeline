@@ -1,5 +1,5 @@
 """
-Extraction STRICTE des colonnes « offre » du tableau Masterworks, depuis le texte d'une circulaire
+Extraction STRICTE des colonnes 'offre' du tableau Masterworks, depuis le texte d'une circulaire
 d'offre (253G2), découpé au préalable par extract_sections.py --profile offering.
 
 Même principe que bedrock_extract_stable.py : aucune valeur n'est acceptée sur parole.
@@ -7,8 +7,8 @@ Chaque valeur doit venir avec sa preuve (les mots exacts du document), et le COD
     1. la preuve existe ;
     2. la preuve se trouve réellement dans le document ;
     3. la valeur se lit dans la preuve ;
-    4. la preuve contient le mot-clé attendu pour ce champ (« true-up » pour le true-up,
-       « Class B » pour les actions de classe B...). C'est ce qui empêche de ranger un nombre
+    4. la preuve contient le mot-clé attendu pour ce champ ('true-up' pour le true-up,
+       'Class B' pour les actions de classe B...). C'est ce qui empêche de ranger un nombre
        juste dans le mauvais champ.
 Une valeur qui échoue à un seul contrôle est SUPPRIMÉE, et la raison est enregistrée.
 
@@ -189,12 +189,12 @@ CURRENCY_SIGNS = {"GBP": ["£", "₤", "gbp", "pound"], "USD": ["$", "usd", "dol
 KEYWORDS = {
     "issuer_name": ["llc", "inc", "ltd", "spc", "company"],
     "execution_year": ["created", "painted", "executed", "completed", "dated", "(",
-                       "worked on", "made in", "produced", "between"],   # « worked on … from 2007 to 2008 »
+                       "worked on", "made in", "produced", "between"],   # 'worked on ... from 2007 to 2008'
     "height_cm": ["cm"],
     "width_cm": ["cm"],
     "incorporation_date": ["formed", "organized", "incorporated", "organised"],
     "purchase_date": ["purchas", "acquir", "auction", "bought"],
-    # Pas « auction » : une ESTIMATION parle aussi d'enchères. Il faut un vrai verbe d'achat.
+    # Pas 'auction' : une ESTIMATION parle aussi d'enchères. Il faut un vrai verbe d'achat.
     "purchase_price": ["purchas", "acquir", "paid", "bought"],
     "purchase_price_usd": ["purchas", "acquir", "paid", "bought"],
     "true_up": ["true-up", "true up", "trueup"],
@@ -217,7 +217,7 @@ KINDS = {
 
 
 def base_letter(ch):
-    """« ü » -> « u », « é » -> « e » : un seul caractère pour un seul caractère (les positions restent justes)."""
+    """'ü' -> 'u', 'é' -> 'e' : un seul caractère pour un seul caractère (les positions restent justes)."""
     if ch.isascii():
         return ch
     decomposed = unicodedata.normalize("NFKD", ch)
@@ -232,7 +232,7 @@ def normalize(s):
 
 
 def numbers_in(text):
-    """Tous les nombres d'un texte : « $1,815,000 » -> 1815000, « $4.9 million » -> 4900000, « 167,6 » -> 167.6."""
+    """Tous les nombres d'un texte : '$1,815,000' -> 1815000, '$4.9 million' -> 4900000, '167,6' -> 167.6."""
     found = []
     text = re.sub(r"(\d[\d,.]*)\s*(-|–|—|to)\s*(\d[\d,.]*)\s*(million|billion|bn|m\b)",
                   r"\1 \4 \2 \3 \4", text.lower())
@@ -333,9 +333,9 @@ def locate(source, document):
     return None
 
 
-# Ce qui ferme une « phrase » : un point, un retour à la ligne, une puce, un point-virgule.
+# Ce qui ferme une 'phrase' : un point, un retour à la ligne, une puce, un point-virgule.
 # Les puces comptent : un supplément liste plusieurs changements dans UNE phrase à puces, et chaque
-# puce parle d'un seul champ (sinon, « true-up » et « purchase price » seraient dans la même « phrase »).
+# puce parle d'un seul champ (sinon, 'true-up' et 'purchase price' seraient dans la même 'phrase').
 BOUNDARIES = (". ", "\n", "●", "•", "▪", "; ")
 
 
@@ -383,7 +383,7 @@ def check(field, item, document, report):
 
 
 def as_written(value, passage):
-    """Le texte tel qu'il est ÉCRIT dans le document : « Gunther Forg » lu par le modèle -> « Günther Förg »."""
+    """Le texte tel qu'il est ÉCRIT dans le document : 'Gunther Forg' lu par le modèle -> 'Günther Förg'."""
     norm_passage, positions = normalize_with_positions(passage, tolerant=False)
     norm_value, _ = normalize_with_positions(str(value), tolerant=False)
     i = norm_passage.find(norm_value)
@@ -393,14 +393,14 @@ def as_written(value, passage):
 
 
 PRICE_PER_SHARE = re.compile(r"\$\s?(\d{1,4}(?:\.\d{2})?)\s+per\s+(?:class a\s+)?(?:ordinary\s+)?share", re.I)
-# « $0.01 per share », valeur comptable, et les distributions des ventes passées d'AUTRES sociétés
+# '$0.01 per share', valeur comptable, et les distributions des ventes passées d'AUTRES sociétés
 PRICE_EXCLUDED = ["cash cost", "book value", "less than", "distribut", "proceeds", "previously", "prior ",
                   "sold", "sale of", "net annualized", "return"]
 
 
 def regex_price_per_share(document):
-    """Secours si le modèle n'a pas donné de prix par action valable : on cherche « $20.00 per share »
-    dans le texte, en écartant les phrases hypothétiques et les autres montants « par action ».
+    """Secours si le modèle n'a pas donné de prix par action valable : on cherche '$20.00 per share'
+    dans le texte, en écartant les phrases hypothétiques et les autres montants 'par action'.
     Renvoie (prix, phrase) seulement si les phrases qui parlent de l'OFFRE donnent un prix unique."""
     candidates = []
     for sentence in re.split(r"(?<=[.!?])\s+|\n+", document):
@@ -420,9 +420,9 @@ CHANGE = re.compile(r"from\s+(\$?\s?\d[\d,]*(?:\.\d+)?)[^●•;]*?\bto\s+(\$?\s
 
 
 def explicit_changes(document):
-    """Les changements écrits « from X to Y » dans un supplément, puce par puce.
+    """Les changements écrits 'from X to Y' dans un supplément, puce par puce.
     Renvoie {champ: (nouvelle valeur, ancienne valeur, puce)}. Ce n'est pas un calcul :
-    la nouvelle valeur est ÉCRITE dans le document, après « to »."""
+    la nouvelle valeur est ÉCRITE dans le document, après 'to'."""
     changes = {}
     for bullet in re.split(r"[●•▪;]|\n|(?<=[.!?])\s+", document):
         low = normalize(bullet)
@@ -451,11 +451,11 @@ def explicit_changes(document):
     return changes
 
 
-# « for £739,461.38, or $944,600 » ou « for £4,733,750 ($6,239,556) » : le prix d'origine, puis en dollars
+# 'for GBP 739,461.38, or $944,600' ou 'for GBP 4,733,750 ($6,239,556)' : le prix d'origine, puis en dollars
 DUAL_PRICE = re.compile(
     r"(£|₤|€|¥|HK\$|CHF|GBP|EUR|HKD|JPY)\s?(\d[\d,]*(?:\.\d+)?)\s*(?:\(|,?\s*or\s+)\s*(?:US)?\$\s?(\d[\d,]*(?:\.\d+)?)")
 SYMBOL_TO_CURRENCY = {"£": "GBP", "₤": "GBP", "€": "EUR", "¥": "JPY", "HK$": "HKD", "CHF": "CHF",
-                      "GBP": "GBP", "EUR": "EUR", "HKD": "HKD", "JPY": "JPY"}   # « GBP 900,000, or $1,168,065 »
+                      "GBP": "GBP", "EUR": "EUR", "HKD": "HKD", "JPY": "JPY"}   # 'GBP 900,000, or $1,168,065'
 PURCHASE_WORDS = ["purchas", "acquir", "paid", "bought"]
 
 
@@ -478,20 +478,20 @@ def dual_currency_purchase(document):
 
 
 YEAR_RX = r"(1[5-9]\d\d|20[0-2]\d)"
-# « (the "Painting") », « (the “Artwork”) », « (the “Artwork” or the “Painting”) »
+# '(the "Painting")', '(the "Artwork")', '(the "Artwork" or the "Painting")'
 PAINTING_TAG = r"\(the [\"“](?:Painting|Artwork|Work)[\"”](?:\s+or\s+the\s+[\"“](?:Painting|Artwork|Work)[\"”])?\)"
-# Une fin de phrase, mais pas après « No. », « Inc. », « Co. »… (« Untitled No. 10 » est un seul titre)
+# Une fin de phrase, mais pas après 'No.', 'Inc.', 'Co.'... ('Untitled No. 10' est un seul titre)
 SENTENCE_END = r"(?<!\bNo\.)(?<!\bNos\.)(?<!\bInc\.)(?<!\bCo\.)(?<!\bSt\.)(?<!\bVol\.)(?<=[.!?])\s+|\n+"
-SCRAMBLED = re.compile(r"(?:\b\w\b\s+x\s+){3,}")   # texte brouillé : « x C x o x u x p … »
+SCRAMBLED = re.compile(r"(?:\b\w\b\s+x\s+){3,}")   # texte brouillé : 'x C x o x u x p ...'
 
 
 def artwork_facts(text):
     """L'artiste, le titre et l'année, lus par le code dans les tournures fixes des circulaires :
-      « ### The Artist Agnes Martin (b. 1912 … »
-      « … a single work of art by Agnes Martin (the "Painting") »
-      « … created in 1979 by Andy Warhol entitled, 1 Colored Marilyn (Reversal Series) (the "Painting") »
-      « … a single untitled work of art created by Keith Haring (the "Painting") »
-      « … acquire the Painting (1990), which measures … »
+      '### The Artist Agnes Martin (b. 1912 ...'
+      '... a single work of art by Agnes Martin (the "Painting")'
+      '... created in 1979 by Andy Warhol entitled, 1 Colored Marilyn (Reversal Series) (the "Painting")'
+      '... a single untitled work of art created by Keith Haring (the "Painting")'
+      '... acquire the Painting (1990), which measures ...'
     Renvoie {champ: (valeur, phrase du document)}."""
     facts = {}
     m = re.search(r"###\s*The Artist\s+([A-Z][^()\n]{1,60}?)\s*\((?:b\.|born)", text)
@@ -512,7 +512,7 @@ def artwork_facts(text):
         y = re.search(r"created in " + YEAR_RX, sentence) or re.search(r"\bby\s+[^,()]{1,60}?\s+in\s+" + YEAR_RX + r"\s+entitled", sentence)
         if y and "execution_year" not in facts:
             facts["execution_year"] = (int(y.group(1)), sentence.strip())
-    # « Masterworks agreed to acquire Maxine (1974), which … » : le titre ET l'année
+    # 'Masterworks agreed to acquire Maxine (1974), which ...' : le titre ET l'année
     acq = re.search(r"agreed to acquire\s+(?!the Painting)([A-Z][^,()]{0,80}?)\s*\(" + YEAR_RX + r"\)", text)
     if acq:
         passage = text[max(0, acq.start() - 20):acq.end() + 30].replace("\n", " ")
@@ -521,16 +521,49 @@ def artwork_facts(text):
     y = re.search(r"the Painting \(" + YEAR_RX + r"\)", text)
     if y and "execution_year" not in facts:
         facts["execution_year"] = (int(y.group(1)), text[max(0, y.start() - 60):y.end() + 40].replace("\n", " "))
+    # 'Masterworks agreed to acquire the Painting, 1962, which measures at ...' : l'année entre deux virgules
+    y = re.search(r"the (?:Painting|Artwork),\s*" + YEAR_RX + r"\s*,", text)
+    if y and "execution_year" not in facts:
+        facts["execution_year"] = (int(y.group(1)), text[max(0, y.start() - 60):y.end() + 60].replace("\n", " "))
     return facts
 
 
+YEAR_ONLY = re.compile(r"\s*" + YEAR_RX + r"\s*")
+
+
+def fix_artwork_facts(result, text):
+    """
+    Corrections appliquées à TOUS les résultats, y compris ceux relus depuis le cache S3 (sans appel à Bedrock) :
+      - un titre qui n'est qu'une année ('1962') n'est pas un titre : c'est l'année de création
+        ('the Painting, 1962, which measures ...') ; le titre est vidé ;
+      - artiste, titre et année manquants : lus dans les tournures fixes du document (artwork_facts).
+    Modifie result sur place, en notant chaque correction dans audit / warnings.
+    """
+    record = result.record
+    title_year = YEAR_ONLY.fullmatch(record.title or "")
+    if title_year:
+        year = int(title_year.group(1))
+        result.warnings.append(f"titre '{record.title}' retiré : une année n'est pas un titre")
+        record.title = None
+        if record.execution_year is None:
+            record.execution_year = year
+            result.audit.append({"field": "execution_year", "value": year, "source": "année lue à la place du titre"})
+    for field, (value, sentence) in artwork_facts(text or "").items():
+        if getattr(record, field) in (None, ""):
+            if field == "title" and YEAR_ONLY.fullmatch(str(value)):
+                continue
+            setattr(record, field, value)
+            result.audit.append({"field": field, "value": value, "source_text": sentence, "source": "tournure fixe"})
+    return result
+
+
 def unscramble(text):
-    """Retire les « x » de brouillage intercalés entre chaque caractère : « xUxnxtxixtxlxexdx » -> « Untitled ».
-    Ne touche à rien si le texte n'a pas exactement ce motif (un « x » sur deux)."""
+    """Retire les 'x' de brouillage intercalés entre chaque caractère : 'xUxnxtxixtxlxexdx' -> 'Untitled'.
+    Ne touche à rien si le texte n'a pas exactement ce motif (un 'x' sur deux)."""
     core = text.strip()
     if len(core) >= 5 and re.fullmatch(r"(?:[xX].)+[xX]?", core):
         return core[1::2]
-    m = re.fullmatch(r"((?:[xX].)+[xX]?)(\s.*)", core)          # « xPxuxmxpxkxixnx (TOWSSO) »
+    m = re.fullmatch(r"((?:[xX].)+[xX]?)(\s.*)", core)          # 'xPxuxmxpxkxixnx (TOWSSO)'
     if m and len(m.group(1)) >= 5:
         return m.group(1)[1::2] + m.group(2)
     return text
@@ -542,15 +575,15 @@ def coherence_warnings(r):
     if r.class_a_shares_offered and r.price_per_class_a_share and r.aggregate_offering:
         expected = r.class_a_shares_offered * r.price_per_class_a_share
         if abs(expected - r.aggregate_offering) > 1:
-            w.append(f"actions A × prix ({expected:,.0f}) ≠ offre totale ({r.aggregate_offering:,.0f})")
+            w.append(f"actions A times prix ({expected:,.0f}) differs from offre totale ({r.aggregate_offering:,.0f})")
     price = r.purchase_price_usd if r.purchase_price_usd is not None else (
         r.purchase_price if r.purchase_currency in (None, "USD") else None)
     if price and r.true_up and r.aggregate_offering and abs(price + r.true_up - r.aggregate_offering) > 1:
-        w.append(f"prix d'achat + true-up ({price + r.true_up:,.0f}) ≠ offre totale ({r.aggregate_offering:,.0f})")
+        w.append(f"prix d'achat + true-up ({price + r.true_up:,.0f}) differs from offre totale ({r.aggregate_offering:,.0f})")
     if price and r.true_up and not 0.05 <= r.true_up / price <= 0.15:
         w.append(f"true-up de {r.true_up / price:.1%} du prix d'achat (attendu : environ 10 %)")
     if r.incorporation_date and r.purchase_date and r.purchase_date > r.incorporation_date:
-        pass  # normal : l'œuvre peut être achetée avant ou après la constitution de la société
+        pass  # normal : l'oeuvre peut être achetée avant ou après la constitution de la société
     return w
 
 
@@ -626,7 +659,7 @@ MIN_FILLED = len(OfferingExtraction.model_fields) // 2   # en dessous : réponse
 
 def sanitize(data):
     """Écarte les valeurs au mauvais format, champ par champ, au lieu de rejeter toute la réponse.
-    Cas particulier : une plage d'années pour l'année de création (« from 2007 to 2008 », que le modèle
+    Cas particulier : une plage d'années pour l'année de création ('from 2007 to 2008', que le modèle
     renvoie en liste) -> la DERNIÈRE année, comme l'ancien Excel. Renvoie (données nettoyées, remarques)."""
     from pydantic import TypeAdapter, ValidationError
     notes, clean_data = [], {}
@@ -650,11 +683,11 @@ def sanitize(data):
 
 
 def ask_model(client, text):
-    """1er essai : l'outil. S'il plante, ou s'il remplit moins de la moitié des champs,
-    2e essai : JSON en texte. On garde la réponse la PLUS COMPLÈTE des deux.
-    Les contrôles qui suivent sont identiques dans les deux cas."""
+    """Un appel au modèle, réponse en JSON texte. Les contrôles qui suivent vérifient chaque valeur."""
     attempts, best = [], None
-    for use_tool in (True, False):
+    # Un seul essai, en JSON texte : le mode 'outil' de Nova Lite ne remplissait presque jamais les champs
+    # ('outil : 1 champ(s), JSON texte : 17 champ(s)'), et doublait le temps et le coût de chaque extraction.
+    for use_tool in (False,):
         try:
             raw = call_bedrock(client, text, use_tool)
         except Exception as e:
@@ -706,9 +739,9 @@ def process_offering(text, client=None, issuer_name=None) -> OfferingResult:
         report["audit"].append({"field": "issuer_name", "value": issuer_name, "source": "EDGAR (filings.csv)"})
         model_value = raw.issuer_name.value if raw.issuer_name else None
         if model_value and normalize(str(model_value)) != normalize(issuer_name):
-            report["warnings"].append(f"nom lu par le modèle ({model_value!r}) ≠ nom EDGAR ({issuer_name!r})")
+            report["warnings"].append(f"nom lu par le modèle ({model_value!r}) differs from nom EDGAR ({issuer_name!r})")
 
-    # « Hammer 5 (2010) » : l'année entre parenthèses a sa propre colonne. Elle est retirée du titre,
+    # 'Hammer 5 (2010)' : l'année entre parenthèses a sa propre colonne. Elle est retirée du titre,
     # et sert d'année de création si le modèle n'en a pas donné (elle est écrite dans la preuve du titre).
     # Artiste, titre, année : si le modèle ne les a pas trouvés, on les lit dans les tournures fixes
     for field, (value, sentence) in artwork_facts(text).items():
@@ -718,22 +751,22 @@ def process_offering(text, client=None, issuer_name=None) -> OfferingResult:
         elif normalize(str(values[field])) != normalize(str(value)) and field != "title":
             report["warnings"].append(f"{field} : le modèle a lu {values[field]!r}, la tournure fixe donne {value!r}")
 
-    # « “Rat & Heart” » : les guillemets autour du titre ne font pas partie du titre
+    # '"Rat & Heart"' : les guillemets autour du titre ne font pas partie du titre
     if values.get("title"):
         values["title"] = values["title"].strip().strip('"“”\'‘’').strip() or None
-    # Filet de sécurité : « xRxaxtx x&x xHxexaxrxtx » -> « Rat & Heart » (texte anti-copie mal retiré)
+    # Filet de sécurité : 'xRxaxtx x&x xHxexaxrxtx' -> 'Rat & Heart' (texte anti-copie mal retiré)
     for field in ("title", "artist_name"):
         if values.get(field):
             values[field] = unscramble(values[field])
 
-    # « Coup de Vent, or Gust of Wind » : le titre d'origine, sans sa traduction
+    # 'Coup de Vent, or Gust of Wind' : le titre d'origine, sans sa traduction
     if values.get("title") and re.search(r",\s+or\s+", values["title"]):
         values["title"] = re.split(r",\s+or\s+", values["title"])[0].strip()
-    # « Brian Donnelly, better known as KAWS » : le nom d'artiste
+    # 'Brian Donnelly, better known as KAWS' : le nom d'artiste
     known_as = re.search(r"(?:better |also |professionally )?known as\s+(.+)$", values.get("artist_name") or "", re.I)
     if known_as:
         values["artist_name"] = known_as.group(1).strip(" ,.")
-    # « Titre (2010) » ou « Titre, 2009 » : l'année a sa propre colonne
+    # 'Titre (2010)' ou 'Titre, 2009' : l'année a sa propre colonne
     title_match = re.fullmatch(r"\s*(.+?)\s*(?:\((1[5-9]\d\d|20[0-2]\d)\)|,\s*(1[5-9]\d\d|20[0-2]\d))\s*",
                                values.get("title") or "")
     if title_match:
@@ -744,9 +777,9 @@ def process_offering(text, client=None, issuer_name=None) -> OfferingResult:
             report["audit"].append({"field": "execution_year", "value": year, "source": "année écrite dans le titre",
                                     "source_text": raw.title.source_text if raw.title else None})
         elif values["execution_year"] != year:
-            report["warnings"].append(f"année du titre ({year}) ≠ année de création lue ({values['execution_year']})")
+            report["warnings"].append(f"année du titre ({year}) differs from année de création lue ({values['execution_year']})")
 
-    # Changements écrits « from X to Y » (suppléments) : lus par le code, prioritaires sur le modèle
+    # Changements écrits 'from X to Y' (suppléments) : lus par le code, prioritaires sur le modèle
     for field, (new, old, bullet) in explicit_changes(text).items():
         if new is None:
             report["warnings"].append(f"{field} : {bullet}")
@@ -757,11 +790,11 @@ def process_offering(text, client=None, issuer_name=None) -> OfferingResult:
         if model_value is not None and abs(float(model_value) - new) > 0.01:
             kind = "l'ANCIENNE valeur" if abs(float(model_value) - old) < 0.01 else "une autre valeur"
             report["warnings"].append(f"{field} : le modèle a lu {model_value} ({kind}), le document écrit "
-                                      f"« from {old:,.0f} to {new:,.0f} » : nouvelle valeur retenue")
+                                      f"'from {old:,.0f} to {new:,.0f}' : nouvelle valeur retenue")
         values[field] = new
-        report["audit"].append({"field": field, "value": new, "source_text": bullet, "source": "changement écrit (from → to)"})
+        report["audit"].append({"field": field, "value": new, "source_text": bullet, "source": "changement écrit (from to to)"})
 
-    # Prix écrit dans deux devises (« £739,461.38, or $944,600 ») : lu par le code, prioritaire sur le modèle
+    # Prix écrit dans deux devises ('GBP 739,461.38, or $944,600') : lu par le code, prioritaire sur le modèle
     dual = dual_currency_purchase(text)
     if dual:
         price, currency, usd, sentence = dual
@@ -776,7 +809,7 @@ def process_offering(text, client=None, issuer_name=None) -> OfferingResult:
             report["audit"].append({"field": field, "value": value, "source_text": sentence,
                                     "source": "prix écrit dans deux devises"})
 
-    # Un prix « d'origine » identique au prix en dollars, alors que la devise n'est pas l'USD (ou inconnue) :
+    # Un prix 'd'origine' identique au prix en dollars, alors que la devise n'est pas l'USD (ou inconnue) :
     # c'est le montant en dollars recopié dans le mauvais champ (cas d'un supplément qui ne parle que de dollars)
     if (values.get("purchase_price") is not None and values.get("purchase_price_usd") is not None
             and abs(values["purchase_price"] - values["purchase_price_usd"]) < 0.01
@@ -791,7 +824,7 @@ def process_offering(text, client=None, issuer_name=None) -> OfferingResult:
         price, found = regex_price_per_share(text)
         shares, total = values.get("class_a_shares_offered"), values.get("aggregate_offering")
         if price is not None and shares and total and abs(shares * price - total) > 1:
-            report["warnings"].append(f"prix par action {price} écarté : {shares:,} actions × {price} ≠ offre totale {total:,.0f}")
+            report["warnings"].append(f"prix par action {price} écarté : {shares:,} actions times {price} differs from offre totale {total:,.0f}")
             price, found = None, None
         if price is not None:
             values["price_per_class_a_share"] = price
@@ -829,11 +862,11 @@ def main():
         print(f"   {len(result.audit)} valeur(s) vérifiée(s), {len(result.rejected)} supprimée(s), "
               f"{len(result.missing)} laissée(s) vide(s) par le modèle")
         for x in result.rejected:
-            print(f"   ✗ {x}")
+            print(f"   rejete : {x}")
         for x in result.warnings:
-            print(f"   ⚠ {x}")
+            print(f"   attention : {x}")
         if result.missing:
-            print(f"   ∅ vides : {', '.join(result.missing)}")
+            print(f"   vides : {', '.join(result.missing)}")
 
     with open("offering_extractions.json", "w", encoding="utf-8") as f:
         json.dump([{"document": p, **res.record.model_dump(mode="json")} for p, res in results],

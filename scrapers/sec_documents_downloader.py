@@ -51,12 +51,7 @@ DELAY = 0.15        # la SEC limite à 10 requêtes par seconde
 MAX_RETRIES = 3
 ###########################################################################
 
-#### Ce qu'on télécharge ##################################################
-# Les types de dépôts utiles pour le tableau Masterworks :
-#   253G2 / 253G3 : circulaires d'offre (œuvre, achat, true-up, actions)
-#   1-U           : événements (consignation, vente, acheteur, prix)
-#   1-K / 1-SA    : rapports annuels et semestriels (clôture, liquidation)
-#   1-Z           : fin de l'offre
+###########################################################################
 FORMS = {"253G2", "253G3", "1-U", "1-U/A", "1-K", "1-K/A", "1-SA", "1-SA/A", "1-Z", "1-Z/A"}
 VAULT_FORMS = {"1-A", "1-A/A", "1-A POS"}
 TEXT_EXTENSIONS = (".htm", ".html", ".xml", ".txt", ".pdf")
@@ -69,7 +64,6 @@ MANIFEST_COLUMNS = ["cik", "company_name", "form", "filing_date", "accession_num
 
 
 def get(session, url):
-    """GET prudent : délai entre requêtes, nouvelles tentatives si la SEC est surchargée."""
     for attempt in range(1, MAX_RETRIES + 1):
         response = session.get(url, timeout=60)
         time.sleep(DELAY)
@@ -84,7 +78,7 @@ def get(session, url):
 
 
 def useful_files(index_items, accession):
-    """Garde les textes du dépôt ; écarte images, pages d'index et fichier de soumission complet."""
+    """Keeps the text files from the filing; discards images, index pages, and the complete submission file."""
     kept = []
     for item in index_items:
         name = item["name"]
@@ -116,7 +110,7 @@ def read_s3_csv(key):
 
 
 def download_filing(session, filing, local):
-    """Télécharge les fichiers utiles d'UN dépôt. Renvoie les lignes d'inventaire."""
+    """Downloads the useful files from a filing. Returns the inventory rows."""
     cik = filing["cik"]
     accession = filing["accession_number"]
     accession_clean = accession.replace("-", "")
@@ -142,14 +136,14 @@ def download_filing(session, filing, local):
             "size": len(content), "s3_key": key,
         })
 
-    # Le marqueur est écrit EN DERNIER : s'il existe, tout le dépôt est bien là.
-    # Si le script est interrompu au milieu, le dépôt sera repris au prochain lancement.
+    # The marker is written LAST: if it exists, the entire filing is present.
+    # If the script is interrupted midway, the filing will be resumed on the next run.
     S3_CLIENT.put_object(Bucket=BUCKET_NAME, Key=f"{prefix}/_complete", Body=b"")
     return rows
 
 
 def save_manifest(manifest):
-    """Écrit l'inventaire en local et dans S3."""
+    """Writes the inventory locally and to S3."""
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=MANIFEST_COLUMNS)
     writer.writeheader()
@@ -197,7 +191,6 @@ def main():
     session.headers.update(HEADERS)
     downloaded, skipped, failures = 0, 0, []
 
-    # try / finally : même si vous arrêtez le script (Ctrl + C), l'inventaire est enregistré
     try:
         for n, filing in enumerate(todo, 1):
             label = f"[{n}/{len(todo)}] {filing['company_name']} {filing['form']} {filing['filing_date']}"

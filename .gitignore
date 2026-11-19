@@ -1,7 +1,6 @@
-# Secrets
+
 .env
 
-# Environnements Python
 .venv/
 .venv-ml/
 .venv-label-studio/
@@ -9,23 +8,23 @@ venv/
 __pycache__/
 *.py[cod]
 
-# Éditeur et système
+
 .vscode/
 .DS_Store
 
-# Terraform : état et cache (peuvent contenir des informations sensibles)
+
 **/.terraform/*
 *.tfstate
 *.tfstate.*
 crash.log
 crash.*.log
 
-# Données téléchargées et produites (elles vivent dans S3)
+
 data/
 trashbin/
 ~$*
 
-# Sorties des tests lancés à la main
+
 /offering*.txt
 /offering*.json
 last_raw_response.json

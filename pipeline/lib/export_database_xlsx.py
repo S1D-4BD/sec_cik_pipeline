@@ -66,7 +66,7 @@ COLUMNS = [
     ('Issuer LLC / "The Company"', {"source": "issuer_name_edgar"}),
     ("Artist", {"source": "artist_name"}),
     ("Title", {"source": "title"}),
-    ("Dimensions", {"source": "dimensions_text"}),
+    ("Dimensions", {"source": "dimensions_text", "convert": "dimensions_in_cm"}),
     ("Year of creation of artwork ", {"source": "execution_year", "format": "0"}),
     ("Art Period", {"formula": '=IF(E{r}=0,"",ROUNDDOWN(E{r},-1)&"s")', "needs": ['execution_year']}),
     ("Date of Incorporation", {"source": "incorporation_date", "format": D}),
@@ -137,7 +137,8 @@ HEADER_NOTES = {
         "alors que le titre parle du prix d'émission (AB). À trancher : AM/AB ?",
     "unique Purchase price": "Astuce d'origine (+ROW()/100000) pour rendre chaque prix unique dans les tableaux croisés. "
         "Ce n'est pas une donnée ; inutile dans Power BI.",
-    "Dimensions": "Lues dans la circulaire, en centimètres (plus précis que les pouces arrondis de l'ancien tableau).",
+    "Dimensions": "Convention « 12.3cm x 45.6cm ». Les cm écrits dans la circulaire sont repris tels quels ; "
+                  "sinon les pouces sont convertis (x 2,54). Texte d'origine : offering_table.csv, colonne dimensions_text.",
     "Purchase price": "Prix payé, en dollars américains, tel qu'écrit dans la dernière circulaire (253G2/253G3).",
     "Date of Initial 1-A Form publication": "Date du PREMIER dépôt 1-A dans EDGAR.",
     "Total Class A Shares Outstanding": "Saisi (pas de formule) : la formule d'origine =AQ+AC créait une référence "
@@ -148,6 +149,82 @@ INPUT_FONT = Font(name="Arial", size=10, color="0000FF")
 FORMULA_FONT = Font(name="Arial", size=10, color="000000")
 HEADER_FONT = Font(name="Arial", size=10, bold=True)
 HEADER_FILL = PatternFill("solid", start_color="D9E1F2")
+
+
+# ---------------------------------------------------------------------------------------------
+# Dimensions : convention « 12.3cm x 45.6cm » (centimètres, point décimal, 1 décimale)
+#   - les centimètres écrits dans le document sont repris tels quels (pas d'arrondi supplémentaire) ;
+#   - sinon, les pouces sont convertis (x 2,54) ;
+#   - un texte illisible est laissé tel quel : jamais de valeur inventée.
+# Le texte d'origine reste dans offering_table.csv (colonne dimensions_text).
+# ---------------------------------------------------------------------------------------------
+INCH_TO_CM = 2.54
+UNICODE_FRACTIONS = {"¼": 1 / 4, "½": 1 / 2, "¾": 3 / 4, "⅛": 1 / 8, "⅜": 3 / 8, "⅝": 5 / 8, "⅞": 7 / 8,
+                     "⅓": 1 / 3, "⅔": 2 / 3, "⅙": 1 / 6, "⅚": 5 / 6}
+_FRACTION_CHARS = "".join(UNICODE_FRACTIONS)
+# Un nombre : « 46.4 », « 46,4 », « 19 1/8 », « 19⅛ », « 19-1/8 », « 1/8 », « ⅛ »
+_NUMBER = (rf"(?:\d+(?:[.,]\d+)?(?:\s*[{_FRACTION_CHARS}]|[\s-]+\d+/\d+)?|\d+/\d+|[{_FRACTION_CHARS}])")
+_UNIT = r"(?:cm\b|centim(?:e|è)t(?:er|re)s?\b|inch(?:es)?\b|in\.|in\b|″|\"|”|'')"
+_SEPARATOR = r"(?:x|×|by|X)"
+# Après une mesure : « tall », « wide »… et une virgule éventuelle (« 68 inches tall by 87 inches wide », « 90 in, x 114 in. »)
+_AFTER = r"(?:\s*(?:tall|high|wide|long|deep))?\s*,?"
+_GROUP = re.compile(rf"({_NUMBER})\s*({_UNIT})?{_AFTER}\s*(?:{_SEPARATOR}\s*({_NUMBER})\s*({_UNIT})?{_AFTER}\s*)"
+                    rf"(?:{_SEPARATOR}\s*({_NUMBER})\s*({_UNIT})?)?", re.IGNORECASE)
+
+
+def _to_number(token):
+    """« 19 1/8 » -> 19.125 ; « 46,4 » -> 46.4 ; « ⅛ » -> 0.125."""
+    token = token.strip()
+    total = 0.0
+    for char, value in UNICODE_FRACTIONS.items():
+        if char in token:
+            total += value
+            token = token.replace(char, "")
+    fraction = re.search(r"(\d+)/(\d+)\s*$", token)
+    if fraction:
+        total += int(fraction.group(1)) / int(fraction.group(2))
+        token = token[:fraction.start()]
+    token = token.strip(" -")
+    if token:
+        total += float(token.replace(",", "."))
+    return total
+
+
+def _unit_of(units):
+    units = " ".join(u for u in units if u).lower()
+    if "cm" in units or "centim" in units:
+        return "cm"
+    if units:
+        return "in"
+    return None
+
+
+def _cm_text(value):
+    """182.88 -> « 182.9cm » ; 50.0 -> « 50cm » (point décimal, convention anglaise)."""
+    text = f"{round(value, 1):.1f}"
+    return (text[:-2] if text.endswith(".0") else text) + "cm"
+
+
+def dimensions_in_cm(text):
+    """« 12 x 56 inches » -> « 30.5cm x 142.2cm ». Un texte illisible est renvoyé tel quel."""
+    if not isinstance(text, str) or not text.strip():
+        return text
+    groups = []
+    for match in _GROUP.finditer(text):
+        numbers = [match.group(i) for i in (1, 3, 5) if match.group(i)]
+        unit = _unit_of([match.group(i) for i in (2, 4, 6)])
+        if len(numbers) >= 2 and unit:
+            try:
+                groups.append((unit, [_to_number(n) for n in numbers]))
+            except ValueError:
+                continue
+    for wanted in ("cm", "in"):                      # les cm écrits dans le document d'abord
+        for unit, values in groups:
+            if unit == wanted:
+                factor = 1 if unit == "cm" else INCH_TO_CM
+                return " x ".join(_cm_text(v * factor) for v in values)
+    return text
+
 
 
 def parse(value, fmt):
@@ -234,6 +311,8 @@ def build_workbook(rows):
             cell = ws.cell(row=r, column=c)
             if "source" in spec:
                 cell.value = parse(data.get(spec["source"]), spec.get("format"))
+                if spec.get("convert") == "dimensions_in_cm":
+                    cell.value = dimensions_in_cm(cell.value)
                 cell.font = INPUT_FONT
             elif "formula" in spec and (not spec.get("sale") or liquidation_known) and all(
                     data.get(f) not in (None, "") for f in spec.get("needs", [])):

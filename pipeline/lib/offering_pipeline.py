@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Enchaîne, pour chaque société, les étapes qui remplissent la partie « offre » du tableau Masterworks :
+Enchaîne, pour chaque société, les étapes qui remplissent la partie 'offre' du tableau Masterworks :
 
     filings.csv  ->  TOUTES les circulaires 253G2 et 253G3, de la plus ancienne à la plus récente
                  ->  extract_sections.py --profile offering   (les 4 sections utiles ; le texte entier
                                                                pour un supplément court)
                  ->  offering_extraction.py                   (Nova + contrôles stricts, nom EDGAR)
                  ->  fusion : la valeur du document LE PLUS RÉCENT l'emporte, chaque changement est noté
-                 ->  une ligne par société dans data/tables/offering_table.csv
+                 ->  une ligne par société dans tables/offering_table.csv
 
 La table contient aussi les dates lues directement dans EDGAR (1-A, QUALIF, lancement, 1-Z) :
 aucune n'est demandée au modèle.
@@ -16,11 +16,11 @@ Le script peut être interrompu puis relancé : une société déjà traitée (s
 dans S3, sous extractions/) n'est pas renvoyée à Nova. --force les retraite toutes.
 
 Usage (depuis la racine du projet) :
-    python pipeline/lib/offering_pipeline.py --limit 3        # test sur 3 sociétés
-    python pipeline/lib/offering_pipeline.py --only 009,021          # seulement ces sociétés (le reste de la table est conservé)
-    python pipeline/lib/offering_pipeline.py --only 009 --force      # retraite seulement 009 (relance Bedrock pour elle seule)
-    python pipeline/lib/offering_pipeline.py                  # toutes les sociétés
-    python pipeline/lib/offering_pipeline.py --force          # retraite tout (après un changement de règles)
+    python ml_pipeline/lib/offering_pipeline.py --limit 3        # test sur 3 sociétés
+    python ml_pipeline/lib/offering_pipeline.py --only 009,021          # seulement ces sociétés (le reste de la table est conservé)
+    python ml_pipeline/lib/offering_pipeline.py --only 009 --force      # retraite seulement 009 (relance Bedrock pour elle seule)
+    python ml_pipeline/lib/offering_pipeline.py                  # toutes les sociétés
+    python ml_pipeline/lib/offering_pipeline.py --force          # retraite tout (après un changement de règles)
 
 Nécessite, dans le même dossier : extract_sections.py et offering_extraction.py.
 """
@@ -41,7 +41,10 @@ from botocore.exceptions import ClientError
 
 sys.path.insert(0, str(Path(__file__).parent))
 import extract_sections as sections_lib                    # noqa: E402
-import offering_extraction as offering_lib                 # noqa: E402
+try:
+    import offering_extraction as offering_lib             # noqa: E402  (le nom de votre fichier)
+except ImportError:
+    import offering_extract as offering_lib                # noqa: E402  (le nom d'origine)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -55,7 +58,7 @@ RAW_PREFIX = "raw"
 EXTRACTIONS_PREFIX = "extractions"
 #########################################################################
 
-LOCAL_TABLE = Path(__file__).parent.parent.parent / "data" / "tables" / "offering_table.csv"
+LOCAL_TABLE = Path(__file__).resolve().parents[2] / "data" / "tables" / "offering_table.csv"
 
 CIRCULAR_FORMS = ("253G2", "253G3")
 SHORT_DOCUMENT = 30_000      # en dessous (en caractères) : un supplément court, envoyé en entier
@@ -124,9 +127,9 @@ def document_text(html):
     text = "\n".join(lines)
     if not text.strip():
         return full, "texte entier (sections introuvables)", warnings
-    # La phrase qui présente l'œuvre (« … a single work of art by Agnes Martin (the "Painting") ») est
+    # La phrase qui présente l'oeuvre ('... a single work of art by Agnes Martin (the "Painting")') est
     # souvent sur la page de garde, hors des sections : on l'ajoute, c'est là qu'est l'artiste (et parfois le titre)
-    presentation = [x for x in full.split("\n")          # par paragraphe : « Untitled No. 10 » reste entier
+    presentation = [x for x in full.split("\n")          # par paragraphe : 'Untitled No. 10' reste entier
                     if re.search(r"\(the [\"“](?:Painting|Artwork|Work)[\"”]", x) and "work of art" in x.lower()][:2]
     if presentation:
         text = "## SECTION | PRESENTATION\n" + "\n".join(p.strip() for p in presentation) + "\n\n" + text
@@ -140,7 +143,8 @@ def extract_circular(cik, circular, issuer, client, force):
     cached = None if force else s3_read(f"{folder}/offering_result.json")
     if cached:
         text = (s3_read(f"{folder}/offering_sections.txt") or b"").decode("utf-8")
-        return offering_lib.OfferingResult.model_validate_json(cached), "déjà traitée", text
+        result = offering_lib.OfferingResult.model_validate_json(cached)
+        return offering_lib.fix_artwork_facts(result, text), "déjà traitée", text
 
     html = s3_read(f"{RAW_PREFIX}/{cik}/{accession}/{Path(circular['primary_document']).name}")
     if html is None:
@@ -149,6 +153,7 @@ def extract_circular(cik, circular, issuer, client, force):
     s3_write(f"{folder}/offering_sections.txt", text)
 
     result = offering_lib.process_offering(text, client=client, issuer_name=issuer)
+    offering_lib.fix_artwork_facts(result, text)
     result.warnings[:0] = [f"découpage ({mode}) : {w}" for w in section_warnings]
     s3_write(f"{folder}/offering_result.json", result.model_dump_json(indent=2), "application/json")
     raw_path = Path("last_raw_response.json")
@@ -159,12 +164,12 @@ def extract_circular(cik, circular, issuer, client, force):
 
 def change_kind(field, old, new, later_text):
     """Un changement entre deux circulaires est-il réel, ou une différence de lecture du modèle ?
-      - réel : le document récent écrit « from <ancien> to <nouveau> », ou n'écrit plus l'ancienne valeur ;
+      - réel : le document récent écrit 'from <ancien> to <nouveau>', ou n'écrit plus l'ancienne valeur ;
       - variation de lecture : l'ancienne valeur est TOUJOURS écrite dans le document récent, sans
-        « from … to » : les deux documents disent la même chose, c'est la lecture qui a différé."""
+        'from ... to' : les deux documents disent la même chose, c'est la lecture qui a différé."""
     written = offering_lib.explicit_changes(later_text).get(field)
     if written and written[0] is not None and abs(written[0] - float(new)) < 0.01:
-        return "réel (écrit « from … to »)"
+        return "réel (écrit 'from ... to')"
     if isinstance(old, (int, float)) and not isinstance(old, bool):
         still_there = offering_lib.number_matches(float(old), later_text)
     else:
@@ -234,7 +239,7 @@ def process_company(cik, company_filings, client, force):
 # -------------------------------------------------------------------------
 def select_companies(companies, only=None, limit=None):
     """Les sociétés à traiter, toujours dans le même ordre (par CIK).
-    only : « 009,021,Collection 001,0001817381 » : numéros de LLC, noms ou CIK, séparés par des virgules."""
+    only : '009,021,Collection 001,0001817381' : numéros de LLC, noms ou CIK, séparés par des virgules."""
     ciks = sorted(companies)
     if only:
         wanted = [w.strip() for w in only.split(",") if w.strip()]
@@ -244,12 +249,13 @@ def select_companies(companies, only=None, limit=None):
             return bool(re.search(rf"(?<!\d){re.escape(w)}(?!\d)", companies[cik][0]["company_name"], re.I))
         for w in wanted:
             if not any(hit(c, w) for c in ciks):
-                logging.warning(f"--only : aucune société ne correspond à « {w} »")
+                logging.warning(f"--only : aucune société ne correspond à '{w}'")
         ciks = [c for c in ciks if any(hit(c, w) for w in wanted)]
     return ciks[:limit] if limit else ciks
 
 
 def merge_with_existing(rows, local_path, s3_key):
+    """Mise à jour PARTIELLE : les lignes traitées remplacent les anciennes, toutes les autres sont gardées."""
     existing = []
     if local_path.exists():
         existing = list(csv.DictReader(open(local_path, encoding="utf-8")))
@@ -298,6 +304,7 @@ def main():
 
     client = boto3.client("bedrock-runtime", region_name=offering_lib.REGION)
     rows = []
+    # try / finally : même si vous arrêtez le script (Ctrl + C), la table est enregistrée
     try:
         for n, cik in enumerate(ciks, 1):
             name = companies[cik][0]["company_name"]

@@ -14,7 +14,7 @@ from bs4 import BeautifulSoup
 
 # "artwork" : the original configuration (artwork + sales history extraction), unchanged
 SECTIONS = [
-    {"pattern": r"^DESCRIPTION OF BUSINESS$", "subtitles": ["The Painting"]},
+    {"pattern": r"^DESCRIPTION OF BUSINESS$", "subtitles": ["The Painting|The Artwork|Painting"]},
     {"pattern": r"^DESCRIPTION OF BUSINESS$", "subtitles": ["The Artist"]},
     {"pattern": r"^DETERMINATION OF OFFERING PRICE$", "subtitles": None},
     #{"pattern": r"^SECURITY OWNERSHIP", "subtitles": None},
@@ -32,10 +32,10 @@ SECTIONS = [
 #   DILUTION                      -> price per share, aggregate cash cost of the Class B shares
 #   DESCRIPTION OF BUSINESS / The Painting -> dimensions
 OFFERING_SECTIONS = [
-    {"pattern": r"^SUMMARY$", "subtitles": ["Overview", "?The Artist", "The Painting"]},
+    {"pattern": r"^SUMMARY$", "subtitles": ["Overview", "?The Artist", "The Painting|The Artwork|Painting"]},
     {"pattern": r"^DETERMINATION OF OFFERING PRICE$", "subtitles": None},
     {"pattern": r"^DILUTION$", "subtitles": None},
-    {"pattern": r"^DESCRIPTION OF BUSINESS$", "subtitles": ["The Painting"]},
+    {"pattern": r"^DESCRIPTION OF BUSINESS$", "subtitles": ["The Painting|The Artwork|Painting"]},
 ]
 
 PROFILES = {
@@ -53,6 +53,9 @@ def norm(text):
 # Texte INVISIBLE inséré dans certains documents pour brouiller la copie automatique :
 # <FONT STYLE="font-size: 2pt; color: white">x</FONT> entre chaque lettre d'un titre.
 # Un lecteur voit « Rat & Heart », un programme lirait « xRxaxtx x&x xHxexaxrxtx ».
+SUBTITLE_MARK = "data-emphasis"     # marque posée par remove_hidden_text() sur les paragraphes en gras/soulignés
+
+
 def remove_hidden_text(soup):
     """Retire du document tout élément invisible : masqué, de taille nulle, ou blanc et minuscule."""
     for tag in soup.find_all(style=True):
@@ -67,6 +70,12 @@ def remove_hidden_text(soup):
                 or (tiny and (white or filler)):
             # Le texte invisible porte parfois l'espace entre deux mots (« x x ») : on garde cet espace
             tag.replace_with(" " if re.search(r"\s", tag.get_text()) else "")
+    # Les sous-titres (« The Painting », « Overview »…) sont des paragraphes entièrement en gras ou soulignés.
+    # On le note AVANT de retirer les balises <b> et <u>, sinon is_subtitle() ne les reconnaît plus.
+    for paragraph in soup.find_all("p"):
+        emphasis = paragraph.find_all(["b", "u"])
+        if emphasis and norm(" ".join(e.get_text() for e in emphasis)) == norm(paragraph.get_text()):
+            paragraph[SUBTITLE_MARK] = "1"
     # Les balises de mise en forme (police, gras…) sont fusionnées avec leur texte : « R » « a » « t »
     # redeviennent « Rat », au lieu d'être séparés par un espace à la lecture
     for tag in soup.find_all(["font", "span", "b", "i", "u", "strong", "em"]):
@@ -111,10 +120,8 @@ def is_subtitle(block, label=None):
     text = norm(block.get_text())
     if not text or len(text) > MAX_TITLE_LENGTH:
         return False
-    emphasis = block.find_all(["b", "u"])
-    if not emphasis:
-        return False
-    if norm(" ".join(e.get_text() for e in emphasis)) != text:
+    # Entièrement en gras ou souligné : noté par remove_hidden_text() avant que les balises soient retirées
+    if not block.get(SUBTITLE_MARK):
         return False
     if text.endswith("."):
         return False
@@ -198,7 +205,8 @@ def extract(blocks, config=SECTIONS, cover_page=KEEP_COVER_PAGE):
                 for label in wanted:
                     optional = label.startswith("?")
                     label = label.lstrip("?")
-                    sub = index.get(label)
+                    # "The Painting|The Artwork|Painting": the first name found in the document is used
+                    sub = next((index[name] for name in label.split("|") if name in index), None)
                     if sub is None and optional:
                         continue
                     if sub is None:
