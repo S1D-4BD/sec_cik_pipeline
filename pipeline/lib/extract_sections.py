@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 
 #  python3 lib/extract_sections.py ../scrapers/formulaires_253G2/0001738134_0001493152-19-013454_form253g2 > lib/section.txt
-#  python3 extract_sections.py filing.htm --map  > map.txt        
+#  python3 extract_sections.py filing.htm --map  > map.txt
+#  python3 extract_sections.py filing.htm --profile offering -o offering.txt    # sections for the Masterworks table
 
 
 import argparse
@@ -11,13 +12,36 @@ import sys
 from bs4 import BeautifulSoup
 
 
+# "artwork" : the original configuration (artwork + sales history extraction), unchanged
 SECTIONS = [
-    {"pattern": r"^DESCRIPTION OF BUSINESS$", "subtitles": ["The Painting"]},
+    {"pattern": r"^DESCRIPTION OF BUSINESS$", "subtitles": ["The Painting|The Artwork|Painting"]},
     {"pattern": r"^DESCRIPTION OF BUSINESS$", "subtitles": ["The Artist"]},
     {"pattern": r"^DETERMINATION OF OFFERING PRICE$", "subtitles": None},
     #{"pattern": r"^SECURITY OWNERSHIP", "subtitles": None},
     {"pattern": r"^SUMMARY$", "subtitles": ["Overview"]},
 ]
+
+# "offering" : the 14 offering columns of the Masterworks table, in the 4 smallest sections that hold them.
+# Tested on Masterworks 001 (253G2 of 2019-05-10): all 14 values present, 14,433 characters
+# instead of 438,315 for the full document.
+#   SUMMARY / Overview            -> issuer, date of incorporation, purchase date and price, offering size
+#   SUMMARY / The Artist          -> artist name, when The Painting only says "the artist" (Masterworks 005)
+#                                    ("?" = optional subtitle: no warning if a circular does not have it)
+#   SUMMARY / The Painting        -> artist, title, year
+#   DETERMINATION OF OFFERING PRICE -> purchase price, true-up, number of Class A shares, Class B shares
+#   DILUTION                      -> price per share, aggregate cash cost of the Class B shares
+#   DESCRIPTION OF BUSINESS / The Painting -> dimensions
+OFFERING_SECTIONS = [
+    {"pattern": r"^SUMMARY$", "subtitles": ["Overview", "?The Artist", "The Painting|The Artwork|Painting"]},
+    {"pattern": r"^DETERMINATION OF OFFERING PRICE$", "subtitles": None},
+    {"pattern": r"^DILUTION$", "subtitles": None},
+    {"pattern": r"^DESCRIPTION OF BUSINESS$", "subtitles": ["The Painting|The Artwork|Painting"]},
+]
+
+PROFILES = {
+    "artwork": {"sections": SECTIONS, "cover_page": False},
+    "offering": {"sections": OFFERING_SECTIONS, "cover_page": False},
+}
 
 
 KEEP_COVER_PAGE = False
@@ -26,9 +50,43 @@ MAX_TITLE_LENGTH = 120
 def norm(text):
     return " ".join(text.replace("\xa0", " ").split())  # basically clearing out weird symbols and extra whitespace
 
+# Texte INVISIBLE inséré dans certains documents pour brouiller la copie automatique :
+# <FONT STYLE="font-size: 2pt; color: white">x</FONT> entre chaque lettre d'un titre.
+# Un lecteur voit « Rat & Heart », un programme lirait « xRxaxtx x&x xHxexaxrxtx ».
+SUBTITLE_MARK = "data-emphasis"     # marque posée par remove_hidden_text() sur les paragraphes en gras/soulignés
+
+
+def remove_hidden_text(soup):
+    """Retire du document tout élément invisible : masqué, de taille nulle, ou blanc et minuscule."""
+    for tag in soup.find_all(style=True):
+        if tag.parent is None:
+            continue                         # déjà retiré avec un élément parent
+        style = re.sub(r"\s+", "", str(tag.get("style", "")).lower())
+        size = re.search(r"font-size:(\d+(?:\.\d+)?)(pt|px)", style)
+        tiny = size is not None and float(size.group(1)) <= (3 if size.group(2) == "pt" else 4)
+        white = re.search(r"color:(white|#fff\b|#ffffff)", style) is not None
+        filler = re.fullmatch(r"[xX\s]+", tag.get_text() or "") is not None     # que des « x » (et des espaces)
+        if "display:none" in style or "visibility:hidden" in style or "font-size:0" in style \
+                or (tiny and (white or filler)):
+            # Le texte invisible porte parfois l'espace entre deux mots (« x x ») : on garde cet espace
+            tag.replace_with(" " if re.search(r"\s", tag.get_text()) else "")
+    # Les sous-titres (« The Painting », « Overview »…) sont des paragraphes entièrement en gras ou soulignés.
+    # On le note AVANT de retirer les balises <b> et <u>, sinon is_subtitle() ne les reconnaît plus.
+    for paragraph in soup.find_all("p"):
+        emphasis = paragraph.find_all(["b", "u"])
+        if emphasis and norm(" ".join(e.get_text() for e in emphasis)) == norm(paragraph.get_text()):
+            paragraph[SUBTITLE_MARK] = "1"
+    # Les balises de mise en forme (police, gras…) sont fusionnées avec leur texte : « R » « a » « t »
+    # redeviennent « Rat », au lieu d'être séparés par un espace à la lecture
+    for tag in soup.find_all(["font", "span", "b", "i", "u", "strong", "em"]):
+        tag.unwrap()
+    soup.smooth()
+    return soup
+
+
 def load_file(file_path):
     with open(file_path, encoding="utf-8", errors="replace") as file:
-        soup = BeautifulSoup(file.read(), "lxml")  # not html files, its close its htm (so not perfect but its like XML)
+        soup = remove_hidden_text(BeautifulSoup(file.read(), "lxml"))  # .htm, close to XML ; hidden text removed
 
     root = soup.find("text") or soup.body  # the root element is actually <text> in these htm files
     if root is None:
@@ -62,10 +120,8 @@ def is_subtitle(block, label=None):
     text = norm(block.get_text())
     if not text or len(text) > MAX_TITLE_LENGTH:
         return False
-    emphasis = block.find_all(["b", "u"])
-    if not emphasis:
-        return False
-    if norm(" ".join(e.get_text() for e in emphasis)) != text:
+    # Entièrement en gras ou souligné : noté par remove_hidden_text() avant que les balises soient retirées
+    if not block.get(SUBTITLE_MARK):
         return False
     if text.endswith("."):
         return False
@@ -147,7 +203,12 @@ def extract(blocks, config=SECTIONS, cover_page=KEEP_COVER_PAGE):
                 available = sub_sections(blocks, section["start"], section["finish"])
                 index = {s["title"]: s for s in available}
                 for label in wanted:
-                    sub = index.get(label)
+                    optional = label.startswith("?")
+                    label = label.lstrip("?")
+                    # "The Painting|The Artwork|Painting": the first name found in the document is used
+                    sub = next((index[name] for name in label.split("|") if name in index), None)
+                    if sub is None and optional:
+                        continue
                     if sub is None:
                         warnings.append(
                             f"subtitle not found: {label!r} "
@@ -167,6 +228,8 @@ def main():
     parser.add_argument("-o", "--output", help="output file (default: stdout)")
     parser.add_argument("--map", action="store_true",
                         help="displays structure and exits without extracting")
+    parser.add_argument("--profile", choices=sorted(PROFILES), default="artwork",
+                        help="which sections to extract (default: artwork, the original configuration)")
     args = parser.parse_args()
 
     blocks = load_file(args.file)
@@ -180,7 +243,8 @@ def main():
                 print(f"{'':<8} {sub['start']:>5}                 -- {sub['title']}")
         return 0
 
-    lines, warnings = extract(blocks)
+    profile = PROFILES[args.profile]
+    lines, warnings = extract(blocks, config=profile["sections"], cover_page=profile["cover_page"])
 
     for warning in warnings:
         print(f"[!] {warning}", file=sys.stderr)

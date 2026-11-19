@@ -81,7 +81,6 @@ def run():
             raise RuntimeError(
                 "Requete bloquee par la SEC. Verifier SEC_USER_AGENT."
             )
-
         trouves = _extraire_ciks(reponse.text)
 
         if trouves is None:
