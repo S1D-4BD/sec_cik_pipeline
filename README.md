@@ -1,5 +1,6 @@
 # sec-cik-scraper README
 
+## local run
 ```
 python3 scrapers/sec_cik_scraper.py
 python3 scrapers/sec_filings_index.py
@@ -8,15 +9,9 @@ caffeinate -i python3 pipeline/lib/offering_pipeline.py
 python3 pipeline/lib/lifecycle_pipeline.py
 python3 pipeline/lib/vault_pipeline.py
 python3 pipeline/lib/export_database_xlsx.py
+python3 pipeline/lib/push_to_database.py
 ```
 
-```
-python3 -c "import csv; 
-r=list(csv.DictReader(open('data/tables/filings.csv'))); 
-w=csv.DictWriter(open('data/tables/filings_test.csv','w',newline=''), fieldnames=r[0].keys()); 
-w.writeheader(); 
-w.writerows(x for x in r if x['company_name']=='XXNAMEHEREXX')"
-```
 ---
 
 ## Structure
@@ -35,7 +30,9 @@ sec-scraper-aws/
 │   ├── offering_pipeline.py        # offering: pre-sale data, from the offering circulars
 │   ├── lifecycle_pipeline.py       # lifecycle: post-sale data, from the reports (no LLM)
 │   ├── vault_pipeline.py           # vaults: 1 row per series + Masterworks sales history (no LLM)
-│   └── export_database_xlsx.py     # Excel export (LLCs + vault series)
+│   ├── export_database_xlsx.py     # Excel export (LLCs + vault series)
+│   └── push_to_database.py         # PostgreSQL load (tables + extraction log)
+├── pipeline/sql/schema.sql         # PostgreSQL schema
 │
 ├── data/
 │   └── tables/                     # data files, ignored by Git:
@@ -51,14 +48,13 @@ sec-scraper-aws/
 All commands are run from the project root 
 
 ### installation (once)
-
     python3 -m venv .venv
     source .venv/bin/activate
     python -m pip install -r requirements.txt
 
 ### running the pipeline
 
-Run the steps in this order. Each step uses the output of the previous one
+Run the steps in this order, each step uses the output of the previous one
 
     #### List of Masterworks LLCs
     python3 scrapers/sec_cik_scraper.py
@@ -82,6 +78,14 @@ Run the steps in this order. Each step uses the output of the previous one
     python3 pipeline/lib/export_database_xlsx.py
 
 Output: `data/tables/masterworks_database.xlsx`
+
+    #### PostgreSQL load (optional)
+    python3 pipeline/lib/push_to_database.py
+
+Full reload of the database from the tables and the extraction logs of S3 (`--no-s3-logs` to skip
+them, `--reset` after a change of `pipeline/sql/schema.sql`). By default it writes to the `postgres`
+database of the local PostgreSQL (localhost:5432, your macOS user); another database is set with
+`DATABASE_URL`.
 
 `caffeinate -i` (macOS) prevents the computer from sleeping during long steps: the Mac must
 stay open and plugged in
