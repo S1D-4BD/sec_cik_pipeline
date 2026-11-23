@@ -108,6 +108,14 @@ Rerun them when:
 - you want to update the table: new LLCs and new reports (sales, liquidations) are published 
   regularly. Once a month is enough, for example.
 
+The CIK scraper retries temporary SEC HTTP errors (429, 500, 502, 503 and 504)
+up to three attempts per page, with delays of 2 and 4 seconds. If an HTTP error
+persists, it fails without overwriting the existing S3 CIK list, even if earlier
+pages succeeded. A persistent 503 may require rerunning the workflow later; its
+cause cannot be determined from the status code alone. Set `SEC_USER_AGENT` to
+an identifying name and contact email, using the GitHub Actions repository
+variable for workflow runs.
+
 The download (step 3) never needs to be forced: it only downloads the documents it does not
 have yet, and skips the others. Rerunning it is fast and safe.
 

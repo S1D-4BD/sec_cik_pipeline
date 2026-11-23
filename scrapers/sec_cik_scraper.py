@@ -26,6 +26,8 @@ HEADERS = {
 BASE_URL = "https://www.sec.gov/cgi-bin/browse-edgar"
 PAGE_SIZE = 40
 DELAI_ENTRE_PAGES = 0.5
+MAX_RETRIES = 3
+RETRYABLE_STATUSES = (429, 500, 502, 503, 504)
 
 
 def _extraire_ciks(html):
@@ -71,11 +73,22 @@ def run():
             "hidefilings": 0,
         }
 
-        reponse = session.get(BASE_URL, params=params, timeout=30)
-
-        if reponse.status_code != 200:
-            logging.warning(f"HTTP {reponse.status_code} sur start={start}, arret")
-            break
+        for attempt in range(1, MAX_RETRIES + 1):
+            reponse = session.get(BASE_URL, params=params, timeout=30)
+            if reponse.status_code == 200:
+                break
+            if reponse.status_code in RETRYABLE_STATUSES and attempt < MAX_RETRIES:
+                wait = 2 ** attempt
+                logging.warning(
+                    f"HTTP {reponse.status_code} sur start={start}, "
+                    f"nouvel essai dans {wait} s"
+                )
+                time.sleep(wait)
+                continue
+            raise RuntimeError(
+                f"HTTP {reponse.status_code} sur start={start} : "
+                "ecriture S3 annulee."
+            )
 
         if "Undeclared Automated Tool" in reponse.text:
             raise RuntimeError(
